@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useFetcher } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import type { loader as candidateLoader } from "../../routes/app.auction-candidates.$auctionId";
+import type { loader as biddersLoader } from "../../routes/app.auction-bidders.$auctionId";
 import styles from "./styles";
 import {
-  BuyerPremiumField, DateTimeField, ErrorBanner, ViewHeader, auctionTone, date, datetimeLocal, label, money, timeUntil, useDashboardFetcher,
+  BuyerPremiumField, DateTimeField, ErrorBanner, TablePagination, ViewHeader, auctionTone, date, datetimeLocal, label, money, timeUntil, useDashboardFetcher,
   type Auction, type DashboardData, type ViewId,
 } from "./shared";
 
@@ -15,6 +19,7 @@ const FILTERS: { id: Filter; label: string; match: (a: Auction) => boolean }[] =
   { id: "ENDED", label: "Ended", match: (a) => a.status === "ENDED" && !!a.closedAt },
   { id: "OTHER", label: "Draft & canceled", match: (a) => ["DRAFT", "CANCELED", "CLOSING"].includes(a.status) },
 ];
+const AUCTIONS_PAGE_SIZE = 20;
 
 function HiddenFields({ intent, id }: { intent: string; id: string }) {
   return <><input type="hidden" name="intent" value={intent} /><input type="hidden" name="id" value={id} /></>;
@@ -73,7 +78,17 @@ function AuctionEditor({ auction, currencyCode, onClose }: { auction: Auction; c
 }
 
 function AuctionActions({ auction, onEdit }: { auction: Auction; onEdit: () => void }) {
-  const { fetcher, busy, error } = useDashboardFetcher();
+  const shopify = useAppBridge();
+  const { fetcher, busy, error } = useDashboardFetcher(() => {
+    shopify.modal.hide(`approve-winner-${auction.id}`);
+    shopify.modal.hide(`revoke-winner-${auction.id}`);
+  });
+  const candidateFetcher = useFetcher<typeof candidateLoader>();
+  const eligibleCandidates = candidateFetcher.data?.candidates ?? [];
+  const [selectedBidId, setSelectedBidId] = useState(eligibleCandidates[0]?.id ?? "");
+  useEffect(() => {
+    if (!eligibleCandidates.some((bid) => bid.id === selectedBidId)) setSelectedBidId(eligibleCandidates[0]?.id ?? "");
+  }, [eligibleCandidates, selectedBidId]);
   return (
     <div className={styles.cellStack}>
       <div className={styles.actions}>
@@ -92,22 +107,70 @@ function AuctionActions({ auction, onEdit }: { auction: Auction; onEdit: () => v
         {auction.status === "ENDED" && !auction.closedAt && (
           <fetcher.Form method="post"><HiddenFields intent="close" id={auction.id} /><s-button type="submit" variant="primary" disabled={busy} {...(busy ? { loading: true } : {})}>Close & invoice</s-button></fetcher.Form>
         )}
+        {auction.closedAt && auction.winnerCustomerId && (
+          <s-button type="button" variant="tertiary" tone="critical" commandFor={`revoke-winner-${auction.id}`} command="--show" disabled={busy}>Revoke winner</s-button>
+        )}
+        {auction.closedAt && !auction.winnerCustomerId && (
+          <s-button type="button" variant="primary" commandFor={`approve-winner-${auction.id}`} command="--show" onClick={() => candidateFetcher.load(`/app/auction-candidates/${auction.id}`)} disabled={busy}>Choose winner</s-button>
+        )}
       </div>
       {error && <s-text tone="critical">{error}</s-text>}
+      {auction.closedAt && auction.winnerCustomerId && (
+        <s-modal id={`revoke-winner-${auction.id}`} heading="Revoke this winner?" size="base">
+          <s-stack direction="block" gap="base">
+            <s-paragraph>Revoke customer {auction.winnerCustomerId} as winner for “{auction.title}”. Their open Shopify draft invoice will be deleted so a replacement can be selected.</s-paragraph>
+            <fetcher.Form method="post">
+              <HiddenFields intent="revoke-winner" id={auction.id} />
+              <s-button type="button" variant="secondary" commandFor={`revoke-winner-${auction.id}`} command="--hide">Cancel</s-button>
+              <s-button slot="primary-action" type="submit" variant="primary" tone="critical" disabled={busy} {...(busy ? { loading: true } : {})}>Revoke winner</s-button>
+            </fetcher.Form>
+          </s-stack>
+        </s-modal>
+      )}
+      {auction.closedAt && !auction.winnerCustomerId && (
+        <s-modal id={`approve-winner-${auction.id}`} heading="Choose a replacement winner" size="base">
+          <s-stack direction="block" gap="base">
+            <s-paragraph>Choose a bidder who met the reserve. Approving them sends a new Shopify invoice by email.</s-paragraph>
+            {candidateFetcher.state !== "idle" ? <s-spinner size="base" accessibilityLabel="Loading eligible bidders" /> : candidateFetcher.data?.error ? <s-text tone="critical">{candidateFetcher.data.error}</s-text> : eligibleCandidates.length === 0 ? <s-paragraph>No other bids met the reserve price.</s-paragraph> : (
+              <fetcher.Form method="post">
+                <HiddenFields intent="approve-winner" id={auction.id} />
+                <s-select label="Replacement winner" name="bidId" value={selectedBidId} onChange={(event) => setSelectedBidId(event.currentTarget.value ?? "")}>
+                  {eligibleCandidates.map((bid) => <s-option key={bid.id} value={bid.id}>Customer {bid.customerId} · {money(bid.amountCents, auction.currencyCode)}</s-option>)}
+                </s-select>
+                <s-button type="button" variant="secondary" commandFor={`approve-winner-${auction.id}`} command="--hide">Cancel</s-button>
+                <s-button slot="primary-action" type="submit" variant="primary" disabled={busy || !selectedBidId} {...(busy ? { loading: true } : {})}>Approve winner</s-button>
+              </fetcher.Form>
+            )}
+          </s-stack>
+        </s-modal>
+      )}
     </div>
   );
 }
 
 export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavigate: (view: ViewId) => void }) {
   const { auctions, currencyCode } = data;
+  const bidderFetcher = useFetcher<typeof biddersLoader>();
   const [filter, setFilter] = useState<Filter>("ALL");
   const [query, setQuery] = useState("");
+  const [auctionPage, setAuctionPage] = useState(0);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [biddersAuctionId, setBiddersAuctionId] = useState<string | null>(null);
+  const [bidderPage, setBidderPage] = useState(0);
+  const biddersAuction = auctions.find((auction) => auction.id === biddersAuctionId);
+  const bidderCurrencyCode = biddersAuction?.currencyCode ?? currencyCode;
+  const loadBidderPage = (page: number) => {
+    if (!biddersAuctionId) return;
+    setBidderPage(page);
+    bidderFetcher.load(`/app/auction-bidders/${biddersAuctionId}?page=${page}`);
+  };
   const editing = auctions.find((a) => a.id === editingId && ["SCHEDULED", "LIVE"].includes(a.status));
 
   const activeFilter = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
   const q = query.trim().toLowerCase();
   const visible = auctions.filter((a) => activeFilter.match(a) && (!q || a.title.toLowerCase().includes(q) || a.productTitle.toLowerCase().includes(q)));
+  const currentAuctionPage = Math.min(auctionPage, Math.max(0, Math.ceil(visible.length / AUCTIONS_PAGE_SIZE) - 1));
+  const pagedAuctions = visible.slice(currentAuctionPage * AUCTIONS_PAGE_SIZE, (currentAuctionPage + 1) * AUCTIONS_PAGE_SIZE);
 
   return (
     <>
@@ -121,13 +184,13 @@ export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavi
         <div className={styles.toolbar}>
           <div className={styles.pills} role="tablist" aria-label="Filter auctions">
             {FILTERS.map((f) => (
-              <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} className={`${styles.pill} ${filter === f.id ? styles.pillActive : ""}`} onClick={() => setFilter(f.id)}>
+              <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} className={`${styles.pill} ${filter === f.id ? styles.pillActive : ""}`} onClick={() => { setFilter(f.id); setAuctionPage(0); }}>
                 {f.label}<span className={styles.pillCount}>{auctions.filter(f.match).length}</span>
               </button>
             ))}
           </div>
           <div className={styles.search}>
-            <s-search-field label="Search auctions" labelAccessibilityVisibility="exclusive" placeholder="Search by title or product" value={query} onInput={(e) => setQuery(e.currentTarget.value ?? "")} />
+            <s-search-field label="Search auctions" labelAccessibilityVisibility="exclusive" placeholder="Search by title or product" value={query} onInput={(e) => { setQuery(e.currentTarget.value ?? ""); setAuctionPage(0); }} />
           </div>
         </div>
 
@@ -147,11 +210,12 @@ export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavi
               <s-table-header listSlot="inline">Status</s-table-header>
               <s-table-header>Schedule (UTC)</s-table-header>
               <s-table-header format="numeric">High bid</s-table-header>
+              <s-table-header>Bidders</s-table-header>
               <s-table-header>Result</s-table-header>
               <s-table-header listSlot="secondary">Actions</s-table-header>
             </s-table-header-row>
             <s-table-body>
-              {visible.map((auction) => {
+              {pagedAuctions.map((auction) => {
                 const top = auction.bids[0];
                 return (
                   <s-table-row key={auction.id}>
@@ -184,6 +248,11 @@ export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavi
                       </div>
                     </s-table-cell>
                     <s-table-cell>
+                      <s-button type="button" variant="tertiary" commandFor="auction-bidders-modal" command="--show" onClick={() => { bidderFetcher.load(`/app/auction-bidders/${auction.id}?page=0`); setBiddersAuctionId(auction.id); setBidderPage(0); }}>
+                        View bidders
+                      </s-button>
+                    </s-table-cell>
+                    <s-table-cell>
                       <div className={styles.cellStack}>
                         {auction.winnerCustomerId && <span>Winner: customer {auction.winnerCustomerId}</span>}
                         {auction.closedAt && !auction.winnerCustomerId && <span className={styles.subdued}>No winner</span>}
@@ -200,7 +269,35 @@ export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavi
             </s-table-body>
           </s-table>
         )}
+        {visible.length > 0 && <TablePagination page={currentAuctionPage} pageSize={AUCTIONS_PAGE_SIZE} total={visible.length} onPageChange={setAuctionPage} />}
       </s-section>
+      <s-modal id="auction-bidders-modal" heading={`Bidders${biddersAuction ? ` · ${biddersAuction.title}` : ""}`} size="large">
+        {bidderFetcher.state !== "idle" ? <s-spinner size="base" accessibilityLabel="Loading auction bidders" /> : bidderFetcher.data?.error ? <s-banner tone="critical">{bidderFetcher.data.error}</s-banner> : bidderFetcher.data?.bidders.length ? (
+          <>
+            <s-table variant="auto">
+              <s-table-header-row>
+                <s-table-header listSlot="primary">Shopify customer ID</s-table-header>
+                <s-table-header format="numeric">Highest bid</s-table-header>
+                <s-table-header format="numeric">Bids</s-table-header>
+              </s-table-header-row>
+              <s-table-body>
+                {bidderFetcher.data.bidders.map((bidder) => (
+                  <s-table-row key={bidder.customerId}>
+                    <s-table-cell>{bidder.customerId}</s-table-cell>
+                    <s-table-cell>{money(bidder.highestBidCents, bidderCurrencyCode)}</s-table-cell>
+                    <s-table-cell>{bidder.bidCount}</s-table-cell>
+                  </s-table-row>
+                ))}
+              </s-table-body>
+            </s-table>
+            <s-stack direction="inline" gap="base" alignItems="center">
+              <s-text>Page {bidderPage + 1}</s-text>
+              <s-button variant="secondary" disabled={bidderPage === 0} onClick={() => loadBidderPage(bidderPage - 1)}>Previous</s-button>
+              <s-button variant="secondary" disabled={!bidderFetcher.data.hasNextPage} onClick={() => loadBidderPage(bidderPage + 1)}>Next</s-button>
+            </s-stack>
+          </>
+        ) : bidderFetcher.state === "idle" ? <s-paragraph>No bidders yet.</s-paragraph> : null}
+      </s-modal>
     </>
   );
 }

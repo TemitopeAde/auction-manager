@@ -107,6 +107,23 @@ export function ViewHeader({ title, subtitle, children }: { title: string; subti
   );
 }
 
+export function TablePagination({ page, pageSize, total, onPageChange }: { page: number; pageSize: number; total: number; onPageChange: (page: number) => void }) {
+  if (total <= pageSize) return null;
+  const pageCount = Math.ceil(total / pageSize);
+  const first = page * pageSize + 1;
+  const last = Math.min((page + 1) * pageSize, total);
+  return (
+    <s-stack direction="inline" gap="base" alignItems="center" justifyContent="space-between">
+      <s-text>Showing {first}–{last} of {total}</s-text>
+      <s-stack direction="inline" gap="base" alignItems="center">
+        <s-button variant="secondary" disabled={page === 0} onClick={() => onPageChange(page - 1)}>Previous</s-button>
+        <s-text>Page {page + 1} of {pageCount}</s-text>
+        <s-button variant="secondary" disabled={page + 1 >= pageCount} onClick={() => onPageChange(page + 1)}>Next</s-button>
+      </s-stack>
+    </s-stack>
+  );
+}
+
 export function DateTimeField({ label: text, name, defaultValue, id, startNowShortcut = false, required = true }: { label: string; name: string; defaultValue?: string; id: string; startNowShortcut?: boolean; required?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
 

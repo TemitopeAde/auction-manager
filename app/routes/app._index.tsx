@@ -97,6 +97,52 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
     return { ok: true, message: "Scheduled auction canceled." };
   }
+  if (intent === "revoke-winner") {
+    const id = String(form.get("id") ?? "");
+    const auction = await prisma.auction.findFirst({ where: { id, shop: session.shop } });
+    if (!auction?.closedAt || !auction.winnerCustomerId) return { error: "This auction does not have a winner to revoke." };
+    if (auction.draftOrderId) {
+      const deleted = await admin.graphql(`#graphql
+        mutation RevokeAuctionWinnerDraft($input: DraftOrderDeleteInput!) {
+          draftOrderDelete(input: $input) { deletedId userErrors { field message } }
+        }`, { variables: { input: { id: auction.draftOrderId } } });
+      const result = await deleted.json();
+      const payload = result.data?.draftOrderDelete;
+      if (!payload?.deletedId || payload.userErrors?.length) {
+        return { error: payload?.userErrors?.map((error: { message: string }) => error.message).join("; ") || "The Shopify invoice could not be revoked. It may already have been completed." };
+      }
+    }
+    const revoked = await prisma.auction.updateMany({ where: { id, shop: session.shop, closedAt: { not: null }, winnerCustomerId: auction.winnerCustomerId, draftOrderId: auction.draftOrderId }, data: { winnerCustomerId: null, winnerBidId: null, draftOrderId: null } });
+    if (!revoked.count) return { error: "This auction changed while the winner was being revoked. Reload and try again." };
+    if (auction.draftOrderId) await prisma.offer.updateMany({ where: { auctionId: id, draftOrderId: auction.draftOrderId }, data: { status: "EXPIRED", draftOrderId: null } });
+    return { ok: true, message: "Winner revoked. Select and approve a replacement winner." };
+  }
+  if (intent === "approve-winner") {
+    const id = String(form.get("id") ?? "");
+    const bidId = String(form.get("bidId") ?? "");
+    const auction = await prisma.auction.findFirst({ where: { id, shop: session.shop } });
+    if (!auction?.closedAt || auction.winnerCustomerId || auction.draftOrderId) return { error: "Revoke the current winner before selecting a replacement." };
+    const bid = await prisma.bid.findFirst({ where: { id: bidId, auctionId: auction.id } });
+    if (!bid) return { error: "Choose a valid bidder from this auction." };
+    if (auction.reservePriceCents !== null && bid.amountCents < auction.reservePriceCents) return { error: "This bid did not meet the reserve price." };
+    const claimed = await prisma.auction.updateMany({ where: { id, shop: session.shop, closedAt: { not: null }, winnerCustomerId: null, draftOrderId: null }, data: { status: "CLOSING" } });
+    if (!claimed.count) return { error: "Another admin action has already changed this auction." };
+    try {
+      const draftOrderId = await createInvoice(admin, {
+        customerId: bid.customerId,
+        variantId: auction.variantId,
+        title: auction.title,
+        amountCents: bid.amountCents,
+        buyerPremiumBps: auction.buyersPremiumBps,
+        currencyCode: auction.currencyCode,
+      });
+      await prisma.auction.update({ where: { id: auction.id }, data: { status: "ENDED", winnerCustomerId: bid.customerId, winnerBidId: bid.id, draftOrderId } });
+      return { ok: true, message: "Replacement winner approved and Shopify invoice emailed." };
+    } catch (error) {
+      await prisma.auction.updateMany({ where: { id: auction.id, status: "CLOSING", winnerCustomerId: null }, data: { status: "ENDED" } });
+      return { error: error instanceof Error ? error.message : "Could not approve this replacement winner." };
+    }
+  }
   if (intent === "update-scheduled") {
     const id = String(form.get("id") ?? "");
     const now = new Date();

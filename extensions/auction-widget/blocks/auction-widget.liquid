@@ -1,7 +1,8 @@
 <div
-  class="auction-widget"
+  class="auction-widget{% if block.settings.inherit_theme_style %} auction-widget--theme{% else %} auction-widget--custom-style{% endif %}"
   data-auction-widget
   data-product-id="gid://shopify/Product/{{ product.id }}"
+  data-storefront-customer-logged-in="{% if customer %}true{% else %}false{% endif %}"
   data-endpoint="/apps/auction-manager/auctions"
   data-bid-amount-label="{{ 'auction.bid_amount' | t | escape }}"
   data-login-message="{{ 'auction.login_required' | t | escape }}"
@@ -14,44 +15,118 @@
   data-counter-message="{{ 'auction.counter_received' | t | escape }}"
   data-buy-now-label="{{ 'auction.buy_now' | t | escape }}"
   data-proxy-bid-label="{{ 'auction.proxy_bid_amount' | t | escape }}"
+  data-proxy-hint="{{ 'auction.proxy_hint' | t | escape }}"
   data-no-end-message="{{ 'auction.no_end_date' | t | escape }}"
+  data-current-bid-label="{{ 'auction.current_bid' | t | escape }}"
+  data-starting-bid-label="{{ 'auction.starting_bid' | t | escape }}"
+  data-bids-one="{{ 'auction.bids_one' | t | escape }}"
+  data-bids-other="{{ 'auction.bids_other' | t | escape }}"
+  data-no-bids="{{ 'auction.no_bids' | t | escape }}"
+  data-min-bid-hint="{{ 'auction.min_bid_hint' | t | escape }}"
+  data-live-label="{{ 'auction.live' | t | escape }}"
+  data-ending-soon-label="{{ 'auction.ending_soon' | t | escape }}"
+  data-ended-label="{{ 'auction.ended' | t | escape }}"
+  data-toast-bid-success-title="{{ 'auction.toast_bid_success_title' | t | escape }}"
+  data-toast-bid-success-description="{{ 'auction.toast_bid_success_description' | t | escape }}"
+  data-toast-bid-error-title="{{ 'auction.toast_bid_error_title' | t | escape }}"
+  data-editor-heading="{{ block.settings.heading | escape }}"
+  data-show-title="{{ block.settings.show_title }}"
+  data-show-current-bid="{{ block.settings.show_current_bid }}"
+  data-show-closing-time="{{ block.settings.show_closing_time }}"
+  data-show-quick-bids="{{ block.settings.show_quick_bids }}"
+  style="{% unless block.settings.inherit_theme_style %}--aw-bg: {{ block.settings.background_color }}; --aw-border: {{ block.settings.border_color }}; --aw-accent: {{ block.settings.accent_color }}; --aw-accent-text: {{ block.settings.accent_text_color }};{% endunless %} --aw-radius: {{ block.settings.corner_radius }}px;"
   {{ block.shopify_attributes }}
 >
   <div class="auction-widget__skeleton" aria-hidden="true">
+    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--badge"></span>
     <span class="auction-widget__skeleton-line auction-widget__skeleton-line--title"></span>
-    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--short"></span>
-    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--medium"></span>
+    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--price"></span>
     <span class="auction-widget__skeleton-line auction-widget__skeleton-line--button"></span>
   </div>
-  <p class="auction-widget__status" aria-live="polite"></p>
-  <a class="auction-widget__login" href="{{ routes.account_login_url }}?return_url={{ request.path | url_encode }}" hidden>{{ 'auction.login' | t }}</a>
+
   <div class="auction-widget__details" hidden>
+    <header class="auction-widget__header">
+      <span class="auction-widget__badge" data-tone="live">
+        <span class="auction-widget__badge-dot" aria-hidden="true"></span>
+        <span class="auction-widget__badge-label">{{ 'auction.live' | t }}</span>
+      </span>
+      <span class="auction-widget__bid-count"></span>
+    </header>
+
     <h3 class="auction-widget__title"></h3>
-    <p>{{ 'auction.current_bid' | t }}: <strong class="auction-widget__current"></strong></p>
-    <p>{{ 'auction.closes_at' | t }}: <time class="auction-widget__ends"></time></p>
-    <form class="auction-widget__form" hidden>
+
+    <div class="auction-widget__stats">
+      <div class="auction-widget__stat auction-widget__current-row">
+        <span class="auction-widget__label auction-widget__current-label">{{ 'auction.current_bid' | t }}</span>
+        <strong class="auction-widget__current"></strong>
+      </div>
+      <div class="auction-widget__stat auction-widget__closing-row">
+        <span class="auction-widget__label">{{ 'auction.closes_at' | t }}</span>
+        <div class="auction-widget__countdown" role="timer" aria-live="off" hidden>
+          <span class="auction-widget__unit"><b data-unit="d">00</b><small>{{ 'auction.days' | t }}</small></span>
+          <span class="auction-widget__unit"><b data-unit="h">00</b><small>{{ 'auction.hours' | t }}</small></span>
+          <span class="auction-widget__unit"><b data-unit="m">00</b><small>{{ 'auction.minutes' | t }}</small></span>
+          <span class="auction-widget__unit"><b data-unit="s">00</b><small>{{ 'auction.seconds' | t }}</small></span>
+        </div>
+        <time class="auction-widget__ends"></time>
+      </div>
+    </div>
+
+    <p class="auction-widget__status" role="status" aria-live="polite" hidden></p>
+
+    <div class="auction-widget__login-panel" hidden>
+      <svg class="auction-widget__icon" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M10 2a4 4 0 0 0-4 4v2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V6a4 4 0 0 0-4-4Zm-2 6V6a2 2 0 1 1 4 0v2H8Z"/></svg>
+      <p class="auction-widget__login-text">{{ 'auction.login_required' | t }}</p>
+      <a class="auction-widget__btn auction-widget__btn--primary auction-widget__login" href="{{ routes.account_login_url }}?return_url={{ request.path | url_encode }}">{{ 'auction.login' | t }}</a>
+    </div>
+
+    <form class="auction-widget__form" hidden novalidate>
       <input type="hidden" name="auctionId">
       <input type="hidden" name="intent" value="bid">
       <label class="auction-widget__amount-field">
-        <span>{{ 'auction.bid_amount' | t }}</span>
-        <input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+        <span class="auction-widget__label auction-widget__amount-label">{{ 'auction.bid_amount' | t }}</span>
+        <span class="auction-widget__input-wrap">
+          <span class="auction-widget__currency" aria-hidden="true"></span>
+          <input class="auction-widget__input" name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+        </span>
+        <span class="auction-widget__hint"></span>
       </label>
-      <button type="submit">{{ 'auction.place_bid' | t }}</button>
+      <div class="auction-widget__chips" hidden></div>
+      <button class="auction-widget__btn auction-widget__btn--primary auction-widget__btn--block" type="submit">{{ 'auction.place_bid' | t }}</button>
     </form>
+
     <form class="auction-widget__buy-now-form" hidden>
       <input type="hidden" name="intent" value="buy-now"><input type="hidden" name="auctionId">
-      <button type="submit">{{ 'auction.buy_now' | t }}</button>
+      <button class="auction-widget__btn auction-widget__btn--secondary auction-widget__btn--block" type="submit">{{ 'auction.buy_now' | t }}</button>
     </form>
-    <form class="auction-widget__offer-form" hidden>
-      <input type="hidden" name="intent" value="offer"><input type="hidden" name="auctionId">
-      <label><span>{{ 'auction.offer_amount' | t }}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>
-      <button type="submit">{{ 'auction.send_offer' | t }}</button>
-    </form>
-    <p class="auction-widget__offer-status" aria-live="polite"></p>
-    <form class="auction-widget__counter-form" hidden>
-      <input type="hidden" name="intent" value="accept-counter"><input type="hidden" name="auctionId"><input type="hidden" name="offerId">
-      <button type="submit">{{ 'auction.accept_counter' | t }}</button>
-    </form>
+
+    <details class="auction-widget__offer" hidden>
+      <summary class="auction-widget__offer-summary">
+        <span>{{ 'auction.offer_prompt' | t }}</span>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4Z"/></svg>
+      </summary>
+      <form class="auction-widget__offer-form">
+        <input type="hidden" name="intent" value="offer"><input type="hidden" name="auctionId">
+        <label class="auction-widget__amount-field">
+          <span class="auction-widget__label">{{ 'auction.offer_amount' | t }}</span>
+          <span class="auction-widget__inline">
+            <span class="auction-widget__input-wrap">
+              <span class="auction-widget__currency" aria-hidden="true"></span>
+              <input class="auction-widget__input" name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+            </span>
+            <button class="auction-widget__btn auction-widget__btn--secondary" type="submit">{{ 'auction.send_offer' | t }}</button>
+          </span>
+        </label>
+      </form>
+    </details>
+
+    <div class="auction-widget__notice" hidden>
+      <p class="auction-widget__offer-status" aria-live="polite"></p>
+      <form class="auction-widget__counter-form" hidden>
+        <input type="hidden" name="intent" value="accept-counter"><input type="hidden" name="auctionId"><input type="hidden" name="offerId">
+        <button class="auction-widget__btn auction-widget__btn--primary" type="submit">{{ 'auction.accept_counter' | t }}</button>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -62,6 +137,82 @@
   "templates": ["product"],
   "javascript": "auction-widget.js",
   "stylesheet": "auction-widget.css",
-  "settings": []
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "inherit_theme_style",
+      "label": "Match theme colors",
+      "info": "Use the theme's text and button colors. Turn off to pick custom colors below.",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Custom heading",
+      "info": "Leave blank to use the auction title."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_title",
+      "label": "Show auction title",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_current_bid",
+      "label": "Show current bid",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_closing_time",
+      "label": "Show closing time",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_quick_bids",
+      "label": "Show quick bid buttons",
+      "default": true
+    },
+    {
+      "type": "header",
+      "content": "Custom colors"
+    },
+    {
+      "type": "color",
+      "id": "background_color",
+      "label": "Background color",
+      "default": "#FFFFFF"
+    },
+    {
+      "type": "color",
+      "id": "border_color",
+      "label": "Border color",
+      "default": "#E3E3E3"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Button color",
+      "default": "#121212"
+    },
+    {
+      "type": "color",
+      "id": "accent_text_color",
+      "label": "Button text color",
+      "default": "#FFFFFF"
+    },
+    {
+      "type": "range",
+      "id": "corner_radius",
+      "label": "Corner radius",
+      "min": 0,
+      "max": 24,
+      "step": 2,
+      "unit": "px",
+      "default": 12
+    }
+  ]
 }
 {% endschema %}

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import styles from "./styles";
-import { ViewHeader, bidderTone, label, useDashboardFetcher, type Bidder, type DashboardData } from "./shared";
+import { TablePagination, ViewHeader, bidderTone, label, useDashboardFetcher, type Bidder, type DashboardData } from "./shared";
 
 const STATUSES = ["APPROVED", "PENDING", "BLOCKED"] as const;
+const BIDDER_PAGE_SIZE = 20;
 const ACTION_LABEL: Record<string, string> = { APPROVED: "Approve", BLOCKED: "Block", PENDING: "Mark pending" };
 
 function BidderActions({ bidder }: { bidder: Bidder }) {
@@ -24,7 +25,10 @@ function BidderActions({ bidder }: { bidder: Bidder }) {
 export function BiddersView({ data }: { data: DashboardData }) {
   const { bidders } = data;
   const [filter, setFilter] = useState<"ALL" | (typeof STATUSES)[number]>("ALL");
+  const [page, setPage] = useState(0);
   const visible = bidders.filter((b) => filter === "ALL" || b.status === filter);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(visible.length / BIDDER_PAGE_SIZE) - 1));
+  const pagedBidders = visible.slice(currentPage * BIDDER_PAGE_SIZE, (currentPage + 1) * BIDDER_PAGE_SIZE);
 
   return (
     <>
@@ -35,7 +39,7 @@ export function BiddersView({ data }: { data: DashboardData }) {
           <div className={styles.toolbar}>
             <div className={styles.pills} role="tablist" aria-label="Filter bidders">
               {(["ALL", ...STATUSES] as const).map((s) => (
-                <button key={s} type="button" role="tab" aria-selected={filter === s} className={`${styles.pill} ${filter === s ? styles.pillActive : ""}`} onClick={() => setFilter(s)}>
+                  <button key={s} type="button" role="tab" aria-selected={filter === s} className={`${styles.pill} ${filter === s ? styles.pillActive : ""}`} onClick={() => { setFilter(s); setPage(0); }}>
                   {s === "ALL" ? "All" : label(s)}<span className={styles.pillCount}>{s === "ALL" ? bidders.length : bidders.filter((b) => b.status === s).length}</span>
                 </button>
               ))}
@@ -56,7 +60,7 @@ export function BiddersView({ data }: { data: DashboardData }) {
               <s-table-header listSlot="secondary">Change access</s-table-header>
             </s-table-header-row>
             <s-table-body>
-              {visible.map((bidder) => (
+              {pagedBidders.map((bidder) => (
                 <s-table-row key={bidder.id}>
                   <s-table-cell><s-text type="strong">{bidder.email ?? "—"}</s-text></s-table-cell>
                   <s-table-cell><span className={styles.subdued}>{bidder.customerId}</span></s-table-cell>
@@ -67,6 +71,7 @@ export function BiddersView({ data }: { data: DashboardData }) {
             </s-table-body>
           </s-table>
         )}
+        {visible.length > 0 && <TablePagination page={currentPage} pageSize={BIDDER_PAGE_SIZE} total={visible.length} onPageChange={setPage} />}
       </s-section>
     </>
   );
