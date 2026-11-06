@@ -1,0 +1,16 @@
+query Input {
+  cart {
+    lines {
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            auctionActive: metafield(namespace: "$app", key: "auction_active") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "auction": {
+    "bid_amount": "Your bid",
+    "place_bid": "Place bid",
+    "login_required": "Log in to your customer account to place a bid.",
+    "login": "Log in to bid",
+    "loading": "Checking auction availability…",
+    "current_bid": "Current bid",
+    "closes_at": "Closes",
+    "unavailable": "Auction information is unavailable right now.",
+    "bid_success": "Your bid was placed.",
+    "bid_error": "Unable to place your bid.",
+    "proxy_max": "Proxy bid up to this amount",
+    "proxy_bid_amount": "Maximum proxy bid",
+    "buy_now": "Buy now",
+    "offer_amount": "Your offer",
+    "send_offer": "Make an offer",
+    "accept_counter": "Accept counter offer",
+    "offer_pending": "Your offer is waiting for the store's response.",
+    "offer_accepted": "Your offer was accepted. Watch for an invoice email.",
+    "offer_declined": "Your offer was declined.",
+    "counter_received": "Counter offer:"
+  }
+}

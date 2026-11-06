@@ -1,0 +1,46 @@
+.auction-widget {
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  padding: 1rem;
+  margin-block: 1rem;
+}
+
+.auction-widget__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.auction-widget__form label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.auction-widget__form input {
+  font: inherit;
+  padding: 0.6rem;
+  max-width: 12rem;
+}
+
+.auction-widget__form button {
+  font: inherit;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+}
+
+.auction-widget__buy-now-form,
+.auction-widget__offer-form,
+.auction-widget__counter-form {
+  margin-top: 0.75rem;
+}
+
+.auction-widget__login {
+  display: inline-block;
+  margin-block: 0.5rem 1rem;
+}
+
+.auction-widget__offer-form label {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}

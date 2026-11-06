@@ -1,0 +1,60 @@
+<div
+  class="auction-widget"
+  data-auction-widget
+  data-product-id="gid://shopify/Product/{{ product.id }}"
+  data-endpoint="/apps/auction-manager/auctions"
+  data-bid-amount-label="{{ 'auction.bid_amount' | t | escape }}"
+  data-login-message="{{ 'auction.login_required' | t | escape }}"
+  data-unavailable-message="{{ 'auction.unavailable' | t | escape }}"
+  data-success-message="{{ 'auction.bid_success' | t | escape }}"
+  data-error-message="{{ 'auction.bid_error' | t | escape }}"
+  data-pending-message="{{ 'auction.offer_pending' | t | escape }}"
+  data-accepted-message="{{ 'auction.offer_accepted' | t | escape }}"
+  data-declined-message="{{ 'auction.offer_declined' | t | escape }}"
+  data-counter-message="{{ 'auction.counter_received' | t | escape }}"
+  data-buy-now-label="{{ 'auction.buy_now' | t | escape }}"
+  data-proxy-bid-label="{{ 'auction.proxy_bid_amount' | t | escape }}"
+  {{ block.shopify_attributes }}
+>
+  <p class="auction-widget__status" aria-live="polite">{{ 'auction.loading' | t }}</p>
+  <a class="auction-widget__login" href="{{ routes.account_login_url }}?return_url={{ request.path | url_encode }}" hidden>{{ 'auction.login' | t }}</a>
+  <div class="auction-widget__details" hidden>
+    <h3 class="auction-widget__title"></h3>
+    <p>{{ 'auction.current_bid' | t }}: <strong class="auction-widget__current"></strong></p>
+    <p>{{ 'auction.closes_at' | t }}: <time class="auction-widget__ends"></time></p>
+    <form class="auction-widget__form" hidden>
+      <input type="hidden" name="auctionId">
+      <input type="hidden" name="intent" value="bid">
+      <label class="auction-widget__amount-field">
+        <span>{{ 'auction.bid_amount' | t }}</span>
+        <input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+      </label>
+      <button type="submit">{{ 'auction.place_bid' | t }}</button>
+    </form>
+    <form class="auction-widget__buy-now-form" hidden>
+      <input type="hidden" name="intent" value="buy-now"><input type="hidden" name="auctionId">
+      <button type="submit">{{ 'auction.buy_now' | t }}</button>
+    </form>
+    <form class="auction-widget__offer-form" hidden>
+      <input type="hidden" name="intent" value="offer"><input type="hidden" name="auctionId">
+      <label><span>{{ 'auction.offer_amount' | t }}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>
+      <button type="submit">{{ 'auction.send_offer' | t }}</button>
+    </form>
+    <p class="auction-widget__offer-status" aria-live="polite"></p>
+    <form class="auction-widget__counter-form" hidden>
+      <input type="hidden" name="intent" value="accept-counter"><input type="hidden" name="auctionId"><input type="hidden" name="offerId">
+      <button type="submit">{{ 'auction.accept_counter' | t }}</button>
+    </form>
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "Auction bidding",
+  "target": "section",
+  "templates": ["product"],
+  "javascript": "auction-widget.js",
+  "stylesheet": "auction-widget.css",
+  "settings": []
+}
+{% endschema %}

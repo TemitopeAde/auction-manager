@@ -1,0 +1,135 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model Auction {
+  id                  String   @id @default(cuid())
+  shop                String
+  productId           String
+  variantId           String
+  productTitle        String
+  title               String
+  auctionType         String   @default("STANDARD")
+  currencyCode        String   @default("USD")
+  startsAt            DateTime
+  endsAt              DateTime
+  status              String   @default("DRAFT")
+  startingPriceCents  Int
+  reservePriceCents   Int?
+  buyNowPriceCents    Int?
+  bidIncrementCents   Int
+  popcornSeconds      Int      @default(0)
+  proxyBiddingEnabled Boolean  @default(false)
+  buyersPremiumBps    Int      @default(0)
+  offersEnabled       Boolean  @default(false)
+  offerAutoAcceptCents Int?
+  offerAutoDeclineCents Int?
+  requireApprovedBidders Boolean @default(false)
+  winnerCustomerId    String?
+  winnerBidId         String?
+  draftOrderId        String?
+  closedAt            DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  bids                Bid[]
+  proxyBids           ProxyBid[]
+  offers              Offer[]
+
+  @@index([shop, status, startsAt])
+  @@index([productId])
+}
+
+model Bid {
+  id         String   @id @default(cuid())
+  auctionId  String
+  customerId String
+  amountCents Int
+  createdAt  DateTime @default(now())
+  auction    Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  @@index([auctionId, amountCents])
+  @@index([auctionId, customerId])
+}
+
+model ProxyBid {
+  id          String   @id @default(cuid())
+  auctionId   String
+  customerId  String
+  maxBidCents Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  auction     Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  @@unique([auctionId, customerId])
+  @@index([auctionId, maxBidCents])
+}
+
+model Offer {
+  id                 String   @id @default(cuid())
+  auctionId          String
+  shop               String
+  productId          String
+  customerId         String
+  amountCents        Int
+  counterAmountCents Int?
+  status             String   @default("PENDING")
+  expiresAt          DateTime?
+  draftOrderId       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  auction            Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  @@index([shop, status, createdAt])
+  @@index([auctionId, customerId])
+}
+
+model Bidder {
+  id         String   @id @default(cuid())
+  shop       String
+  customerId String
+  email      String?
+  status     String   @default("APPROVED")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shop, customerId])
+  @@index([shop, status])
+  @@index([shop, email])
+}
+
+model ShopSettings {
+  id                   String  @id @default(cuid())
+  shop                 String  @unique
+  checkoutValidationId String?
+}

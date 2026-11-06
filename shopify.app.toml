@@ -1,0 +1,39 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "94b1b720dcef6dae7f6fd12ce4779294"
+name = "Auction Manager"
+application_url = "https://example.com"
+embedded = true
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,write_products,write_draft_orders,read_draft_orders,write_validations,read_validations,write_app_proxy"
+
+[product.metafields.app.auction_active]
+type = "boolean"
+name = "Auction checkout lock"
+description = "Blocks normal checkout while the product has an active auction."
+access.admin = "merchant_read_write"
+
+[app_proxy]
+url = "/proxy"
+prefix = "apps"
+subpath = "auction-manager"
+
+[webhooks]
+api_version = "2027-01"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://example.com/api/auth" ]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true

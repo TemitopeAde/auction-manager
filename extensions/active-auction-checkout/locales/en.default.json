@@ -1,0 +1,4 @@
+{
+  "name": "Active auction checkout lock",
+  "description": "Prevents checkout for products while their auction is active."
+}

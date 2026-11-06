@@ -1,0 +1,307 @@
+import { useLoaderData, useSearchParams } from "react-router";
+import type { ActionFunctionArgs, LinksFunction, LoaderFunctionArgs, ShouldRevalidateFunction } from "react-router";
+import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
+import { createInvoice } from "../shopify/draft-order.server";
+import { ensureAuctionCheckoutValidation, syncAuctionCheckoutLock } from "../shopify/auction-metafields.server";
+import styles from "../components/dashboard/styles";
+import dashboardCss from "../components/dashboard/dashboard.css?url";
+import { Sidebar } from "../components/dashboard/Sidebar";
+import { OverviewView } from "../components/dashboard/OverviewView";
+import { AuctionsView } from "../components/dashboard/AuctionsView";
+import { CreateAuctionView } from "../components/dashboard/CreateAuctionView";
+import { OffersView } from "../components/dashboard/OffersView";
+import { BiddersView } from "../components/dashboard/BiddersView";
+import { VIEW_IDS, setFormatLocale, type ViewId } from "../components/dashboard/shared";
+
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboardCss }];
+
+type Product = { id: string; title: string; status: string; variants: { nodes: { price: string }[] } };
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const [response, auctionsResult, offers, bidders] = await Promise.all([
+    admin.graphql(`#graphql
+      query AuctionProducts {
+        shop { currencyCode }
+      products(first: 250, sortKey: TITLE) {
+          nodes { id title status variants(first: 1) { nodes { id price } } }
+        }
+      }`),
+    prisma.auction.findMany({ where: { shop: session.shop }, orderBy: { createdAt: "desc" }, include: {
+      _count: { select: { bids: true, offers: true } },
+      bids: { orderBy: [{ amountCents: "desc" }, { createdAt: "asc" }], take: 5 },
+    } }),
+    prisma.offer.findMany({ where: { shop: session.shop }, orderBy: { createdAt: "desc" }, include: { auction: { select: { title: true } } } }),
+    prisma.bidder.findMany({ where: { shop: session.shop }, orderBy: { updatedAt: "desc" } }),
+  ]);
+  const checkoutProtection = await ensureAuctionCheckoutValidation(admin, session.shop);
+  const json = await response.json();
+  const now = new Date();
+  const auctions = auctionsResult.map((auction) => ({
+    ...auction,
+    status: auction.status === "CANCELED" ? "CANCELED" : auction.status === "CLOSING" ? "CLOSING" : auction.status === "DRAFT" ? "DRAFT" : auction.closedAt || auction.status === "ENDED" || auction.endsAt <= now ? "ENDED" : auction.startsAt > now ? "SCHEDULED" : "LIVE",
+  }));
+  return { shop: session.shop, locale: new URL(request.url).searchParams.get("locale"), products: (json.data?.products?.nodes ?? []) as Product[], auctions, offers, bidders, currencyCode: json.data?.shop?.currencyCode ?? "USD", checkoutProtection };
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const form = await request.formData();
+  const intent = String(form.get("intent") ?? "create");
+
+  if (intent === "create-bidder") {
+    const customerInput = String(form.get("customerId") ?? "").trim();
+    const customerId = customerInput.replace(/^gid:\/\/shopify\/Customer\//, "");
+    const email = String(form.get("email") ?? "").trim().toLowerCase();
+    const status = String(form.get("status") ?? "APPROVED");
+    if (!/^\d+$/.test(customerId)) return { error: "Enter a Shopify customer ID." };
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return { error: "Enter the bidder email address." };
+    if (!["APPROVED", "BLOCKED", "PENDING"].includes(status)) return { error: "Choose a valid bidder status." };
+    await prisma.bidder.upsert({
+      where: { shop_customerId: { shop: session.shop, customerId } },
+      create: { shop: session.shop, customerId, email, status },
+      update: { email, status },
+    });
+    return { ok: true, message: "Bidder access saved." };
+  }
+  if (intent === "bidder-status") {
+    const id = String(form.get("id") ?? "");
+    const status = String(form.get("status") ?? "");
+    if (!["APPROVED", "BLOCKED", "PENDING"].includes(status)) return { error: "Choose a valid bidder status." };
+    const update = await prisma.bidder.updateMany({ where: { id, shop: session.shop }, data: { status } });
+    if (!update.count) return { error: "Bidder not found for this store." };
+    return { ok: true, message: "Bidder access updated." };
+  }
+  if (intent === "offer-review") {
+    const id = String(form.get("id") ?? "");
+    const decision = String(form.get("decision") ?? "");
+    const offer = await prisma.offer.findFirst({ where: { id, shop: session.shop, status: "PENDING" } });
+    if (!offer) return { error: "This offer is no longer pending." };
+    if (decision === "decline") {
+      const changed = await prisma.offer.updateMany({ where: { id, shop: session.shop, status: "PENDING" }, data: { status: "DECLINED" } });
+      if (!changed.count) return { error: "This offer was already reviewed." };
+      return { ok: true, message: "Offer declined." };
+    }
+    if (decision === "counter") {
+      const counterAmountCents = Math.round(Number(form.get("counterAmount")) * 100);
+      if (!Number.isFinite(counterAmountCents) || counterAmountCents <= offer.amountCents) return { error: "The counter offer must be higher than the customer's offer." };
+      const changed = await prisma.offer.updateMany({ where: { id, shop: session.shop, status: "PENDING" }, data: { status: "COUNTERED", counterAmountCents, expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) } });
+      if (!changed.count) return { error: "This offer was already reviewed." };
+      return { ok: true, message: "Counter offer sent. It expires in 48 hours." };
+    }
+    if (decision === "accept") {
+      const changed = await prisma.offer.updateMany({ where: { id, shop: session.shop, status: "PENDING" }, data: { status: "ACCEPTED", expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) } });
+      if (!changed.count) return { error: "This offer was already reviewed." };
+      return { ok: true, message: "Offer accepted. The next scheduled job will email the customer a secure invoice." };
+    }
+    return { error: "Choose accept, counter, or decline." };
+  }
+
+  if (intent === "delete") {
+    const id = String(form.get("id") ?? "");
+    await prisma.auction.deleteMany({ where: { id, shop: session.shop, status: "DRAFT" } });
+    return { ok: true };
+  }
+  if (intent === "cancel-scheduled") {
+    const id = String(form.get("id") ?? "");
+    const auction = await prisma.auction.findFirst({ where: { id, shop: session.shop, status: "SCHEDULED", startsAt: { gt: new Date() } } });
+    if (!auction) return { error: "Only upcoming auctions can be canceled." };
+    await prisma.auction.update({ where: { id: auction.id }, data: { status: "CANCELED", closedAt: new Date() } });
+    await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
+    return { ok: true, message: "Scheduled auction canceled." };
+  }
+  if (intent === "update-scheduled") {
+    const id = String(form.get("id") ?? "");
+    const auction = await prisma.auction.findFirst({ where: { id, shop: session.shop, status: "SCHEDULED", startsAt: { gt: new Date() } }, include: { _count: { select: { bids: true } } } });
+    if (!auction || auction._count.bids > 0) return { error: "Only upcoming auctions without bids can be edited." };
+    const title = String(form.get("title") ?? "").trim();
+    const toUtcDate = (value: FormDataEntryValue | null) => {
+      const parts = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+      return parts ? new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4]), Number(parts[5]))) : new Date(NaN);
+    };
+    const startsAt = toUtcDate(form.get("startsAt"));
+    const endsAt = toUtcDate(form.get("endsAt"));
+    const startingPrice = Number(form.get("startingPrice"));
+    const reservePrice = form.get("reservePrice") ? Number(form.get("reservePrice")) : null;
+    const buyNowPrice = form.get("buyNowPrice") ? Number(form.get("buyNowPrice")) : null;
+    const bidIncrement = Number(form.get("bidIncrement"));
+    const numericValues = [startingPrice, bidIncrement, ...(reservePrice === null ? [] : [reservePrice]), ...(buyNowPrice === null ? [] : [buyNowPrice])];
+    if (!title || Number.isNaN(startsAt.valueOf()) || Number.isNaN(endsAt.valueOf()) || startsAt <= new Date() || endsAt <= startsAt || numericValues.some((value) => !Number.isFinite(value) || value < 0) || bidIncrement <= 0 || (reservePrice !== null && reservePrice < startingPrice) || (buyNowPrice !== null && buyNowPrice <= startingPrice) || (reservePrice !== null && buyNowPrice !== null && reservePrice > buyNowPrice)) {
+      return { error: "Check the title, future schedule, and auction prices." };
+    }
+    const overlap = await prisma.auction.findFirst({ where: { shop: session.shop, productId: auction.productId, id: { not: id }, status: { in: ["LIVE", "SCHEDULED"] }, closedAt: null, startsAt: { lt: endsAt }, endsAt: { gt: startsAt } }, select: { id: true } });
+    if (overlap) return { error: "This product already has an auction scheduled during that time." };
+    await prisma.auction.update({ where: { id }, data: {
+      title, startsAt, endsAt,
+      startingPriceCents: Math.round(startingPrice * 100),
+      bidIncrementCents: Math.round(bidIncrement * 100),
+      reservePriceCents: reservePrice === null ? null : Math.round(reservePrice * 100),
+      buyNowPriceCents: buyNowPrice === null ? null : Math.round(buyNowPrice * 100),
+    } });
+    await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
+    return { ok: true, message: "Scheduled auction updated." };
+  }
+  if (intent === "close" || intent === "end-auction") {
+    const id = String(form.get("id") ?? "");
+    const now = new Date();
+    const auction = await prisma.auction.findFirst({ where: { id, shop: session.shop }, include: {
+      bids: { orderBy: [{ amountCents: "desc" }, { createdAt: "asc" }], take: 1 },
+      offers: { where: { status: { in: ["BUY_NOW", "ACCEPTED"] }, draftOrderId: null }, orderBy: { createdAt: "asc" } },
+    } });
+    if (!auction || (intent === "close" && auction.endsAt > now) || (intent === "end-auction" && (auction.startsAt > now || auction.endsAt <= now || auction.closedAt))) return { error: "This auction can’t be closed in its current state." };
+    if (auction.closedAt || auction.draftOrderId) return { error: "This auction has already been closed." };
+    const claimed = await prisma.auction.updateMany({
+      where: { id: auction.id, shop: session.shop, closedAt: null, draftOrderId: null, status: { in: ["LIVE", "SCHEDULED", "ENDED"] } },
+      data: { status: "CLOSING" },
+    });
+    if (!claimed.count) return { error: "This auction is already being closed." };
+    const winningOffer = auction.offers.find((offer) => offer.status === "BUY_NOW")
+      ?? auction.offers.find((offer) => offer.status === "ACCEPTED" && (!offer.expiresAt || offer.expiresAt > now));
+    const winner = winningOffer ? null : auction.bids[0];
+    const winnerCustomerId = winningOffer?.customerId ?? winner?.customerId;
+    const winnerAmountCents = winningOffer?.amountCents ?? winner?.amountCents;
+    if (!winnerCustomerId || winnerAmountCents === undefined || (!winningOffer && auction.reservePriceCents !== null && winnerAmountCents < auction.reservePriceCents)) {
+      await prisma.auction.update({ where: { id: auction.id }, data: { status: "ENDED", endsAt: now, closedAt: now } });
+      await prisma.offer.updateMany({ where: { auctionId: auction.id, status: { in: ["PENDING", "COUNTERED", "ACCEPTED"] } }, data: { status: "EXPIRED" } });
+      await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
+      return { ok: true, message: "Auction closed without a reserve-qualified winner." };
+    }
+    try {
+      const draftOrderId = await createInvoice(admin, {
+        customerId: winnerCustomerId,
+        variantId: auction.variantId,
+        title: auction.title,
+        amountCents: winnerAmountCents,
+        buyerPremiumBps: auction.buyersPremiumBps,
+        currencyCode: auction.currencyCode,
+      });
+      if (winningOffer) await prisma.offer.update({ where: { id: winningOffer.id }, data: { draftOrderId } });
+      await prisma.auction.update({ where: { id: auction.id }, data: {
+        status: "ENDED", endsAt: now, closedAt: now, winnerCustomerId,
+        winnerBidId: winner?.id ?? null, draftOrderId,
+      } });
+      await prisma.offer.updateMany({
+        where: { auctionId: auction.id, ...(winningOffer ? { id: { not: winningOffer.id } } : {}), status: { in: ["PENDING", "COUNTERED", "ACCEPTED"] } },
+        data: { status: "EXPIRED" },
+      });
+      await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
+      return { ok: true, message: "Winner declared and Shopify invoice emailed." };
+    } catch (error) {
+      await prisma.auction.updateMany({ where: { id: auction.id, status: "CLOSING", closedAt: null }, data: { status: intent === "end-auction" ? "LIVE" : auction.endsAt <= now ? "ENDED" : auction.startsAt > now ? "SCHEDULED" : "LIVE" } });
+      return { error: error instanceof Error ? error.message : "Could not close this auction." };
+    }
+  }
+  const productId = String(form.get("productId") ?? "");
+  const title = String(form.get("title") ?? "").trim();
+  const toUtcDate = (value: FormDataEntryValue | null) => {
+    const parts = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    return parts ? new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4]), Number(parts[5]))) : new Date(NaN);
+  };
+  const startsAt = toUtcDate(form.get("startsAt"));
+  const endsAt = toUtcDate(form.get("endsAt"));
+  const startingPrice = Number(form.get("startingPrice"));
+  const reservePrice = form.get("reservePrice") ? Number(form.get("reservePrice")) : null;
+  const buyNowPrice = form.get("buyNowPrice") ? Number(form.get("buyNowPrice")) : null;
+  const bidIncrement = Number(form.get("bidIncrement"));
+  const numericValues = [startingPrice, bidIncrement, ...(reservePrice === null ? [] : [reservePrice]), ...(buyNowPrice === null ? [] : [buyNowPrice])];
+  const buyersPremiumPercent = Number(form.get("buyersPremiumPercent") || 0);
+  const offerAutoAccept = form.get("offerAutoAccept") ? Number(form.get("offerAutoAccept")) : null;
+  const offerAutoDecline = form.get("offerAutoDecline") ? Number(form.get("offerAutoDecline")) : null;
+  if (!productId || !title || Number.isNaN(startsAt.valueOf()) || Number.isNaN(endsAt.valueOf()) || endsAt <= startsAt || numericValues.some((value) => !Number.isFinite(value) || value < 0) || bidIncrement <= 0 || !Number.isFinite(buyersPremiumPercent) || buyersPremiumPercent < 0 || buyersPremiumPercent > 100 || (offerAutoAccept !== null && (!Number.isFinite(offerAutoAccept) || offerAutoAccept < 0)) || (offerAutoDecline !== null && (!Number.isFinite(offerAutoDecline) || offerAutoDecline < 0)) || (reservePrice !== null && reservePrice < startingPrice) || (buyNowPrice !== null && buyNowPrice <= startingPrice) || (reservePrice !== null && buyNowPrice !== null && reservePrice > buyNowPrice)) {
+    return { error: "Check the product, dates, starting price, bid increment, reserve, and buy now price." };
+  }
+  const overlappingAuction = await prisma.auction.findFirst({
+    where: {
+      shop: session.shop,
+      productId,
+      closedAt: null,
+      status: { in: ["LIVE", "SCHEDULED"] },
+      startsAt: { lt: endsAt },
+      endsAt: { gt: startsAt },
+    },
+    select: { id: true },
+  });
+  if (overlappingAuction) return { error: "This product already has an auction scheduled during that time." };
+  const productResponse = await admin.graphql(`#graphql
+    query AuctionProduct($id: ID!) { shop { currencyCode } product(id: $id) { id title status variants(first: 1) { nodes { id } } } }`, { variables: { id: productId } });
+  const productJson = await productResponse.json();
+  const selectedProduct = productJson.data?.product;
+  if (!selectedProduct || selectedProduct.status !== "ACTIVE" || !selectedProduct.variants?.nodes?.[0]?.id) return { error: "Choose an active product from your store." };
+  const createdAuction = await prisma.auction.create({ data: {
+    shop: session.shop, productId, variantId: selectedProduct.variants.nodes[0].id, productTitle: selectedProduct.title, title,
+    currencyCode: productJson.data?.shop?.currencyCode ?? "USD",
+    auctionType: form.get("auctionType") === "PENNY" ? "PENNY" : "STANDARD",
+    startsAt, endsAt, startingPriceCents: Math.round(startingPrice * 100),
+    reservePriceCents: reservePrice === null ? null : Math.round(reservePrice * 100),
+    buyNowPriceCents: buyNowPrice === null ? null : Math.round(buyNowPrice * 100),
+    bidIncrementCents: Math.round(bidIncrement * 100),
+    status: startsAt > new Date() ? "SCHEDULED" : "LIVE",
+    popcornSeconds: form.get("popcorn") === "on" ? 120 : 0,
+    proxyBiddingEnabled: form.get("proxyBidding") === "on",
+    buyersPremiumBps: Math.round(buyersPremiumPercent * 100),
+    offersEnabled: form.get("offersEnabled") === "on",
+    offerAutoAcceptCents: offerAutoAccept === null ? null : Math.round(offerAutoAccept * 100),
+    offerAutoDeclineCents: offerAutoDecline === null ? null : Math.round(offerAutoDecline * 100),
+    requireApprovedBidders: form.get("requireApprovedBidders") === "on",
+  } });
+  try {
+    await syncAuctionCheckoutLock(admin, session.shop, createdAuction.productId);
+  } catch (error) {
+    await prisma.auction.delete({ where: { id: createdAuction.id } });
+    return { error: error instanceof Error ? error.message : "Could not enable the checkout lock for this product." };
+  }
+  return { ok: true, message: "Auction created." };
+};
+
+const VIEW_TITLES: Record<ViewId, string> = { overview: "Overview", auctions: "Auctions", create: "New auction", offers: "Offers", bidders: "Bidders" };
+
+// Switching dashboard views only changes `?view=`; don't refetch products and auctions for that.
+export const shouldRevalidate: ShouldRevalidateFunction = ({ currentUrl, nextUrl, formMethod, defaultShouldRevalidate }) => {
+  if (formMethod || currentUrl.pathname !== nextUrl.pathname) return defaultShouldRevalidate;
+  const current = new URLSearchParams(currentUrl.search);
+  const next = new URLSearchParams(nextUrl.search);
+  current.delete("view");
+  next.delete("view");
+  return current.toString() === next.toString() ? false : defaultShouldRevalidate;
+};
+
+export default function AuctionsPage() {
+  const data = useLoaderData<typeof loader>();
+  setFormatLocale(data.locale);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get("view") as ViewId | null;
+  const view: ViewId = requested && VIEW_IDS.includes(requested) ? requested : "overview";
+
+  const navigate = (next: ViewId) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set("view", next);
+      return params;
+    }, { replace: true, preventScrollReset: true });
+    if (typeof window !== "undefined") window.scrollTo({ top: 0 });
+  };
+
+  const counts = {
+    attention: data.offers.filter((o) => o.status === "PENDING").length + data.auctions.filter((a) => a.status === "ENDED" && !a.closedAt).length,
+    auctions: data.auctions.length,
+    pendingOffers: data.offers.filter((o) => o.status === "PENDING").length,
+    bidders: data.bidders.length,
+  };
+
+  return (
+    <s-page heading={VIEW_TITLES[view]} inlineSize="large">
+      {view !== "create" && <s-button slot="primary-action" variant="primary" onClick={() => navigate("create")}>New auction</s-button>}
+      <div className={styles.layout}>
+        <Sidebar view={view} onNavigate={navigate} shop={data.shop} currencyCode={data.currencyCode} counts={counts} protectionEnabled={Boolean(data.checkoutProtection.enabled)} />
+        <main className={styles.main}>
+          {view === "overview" && <OverviewView data={data} onNavigate={navigate} />}
+          {view === "auctions" && <AuctionsView data={data} onNavigate={navigate} />}
+          {view === "create" && <CreateAuctionView data={data} onNavigate={navigate} />}
+          {view === "offers" && <OffersView data={data} />}
+          {view === "bidders" && <BiddersView data={data} />}
+        </main>
+      </div>
+    </s-page>
+  );
+}
