@@ -1,16 +1,15 @@
 import { useRef } from "react";
 import styles from "./styles";
-import { DateTimeField, ErrorBanner, ViewHeader, useDashboardFetcher, type DashboardData, type ViewId } from "./shared";
+import { BuyerPremiumField, DateTimeField, ErrorBanner, ViewHeader, useDashboardFetcher, type DashboardData, type ViewId } from "./shared";
+import { ProductPicker } from "./ProductPicker";
 
 export function CreateAuctionView({ data, onNavigate }: { data: DashboardData; onNavigate: (view: ViewId) => void }) {
-  const { products, currencyCode, checkoutProtection } = data;
+  const { currencyCode, checkoutProtection } = data;
   const formRef = useRef<HTMLFormElement>(null);
   const { fetcher, busy, error } = useDashboardFetcher(() => {
     formRef.current?.reset();
     onNavigate("auctions");
   });
-  const activeProducts = products.filter((product) => product.status === "ACTIVE");
-
   return (
     <>
       <ViewHeader title="New auction" subtitle={`Pick a product, set the schedule and pricing. Times are in UTC and prices in ${currencyCode}.`} />
@@ -22,16 +21,13 @@ export function CreateAuctionView({ data, onNavigate }: { data: DashboardData; o
         </s-banner>
       )}
 
-      <fetcher.Form method="post" ref={formRef}>
+      <fetcher.Form method="post" ref={formRef} noValidate>
         <input type="hidden" name="intent" value="create" />
         <div className={styles.formColumns}>
           <s-stack direction="block" gap="base">
             <s-section heading="Lot details">
               <div className={styles.fieldGrid}>
-                <s-select label="Product" name="productId" required details={activeProducts.length ? undefined : "No active products found in your store."}>
-                  <s-option value="">Select a product</s-option>
-                  {activeProducts.map((product) => <s-option key={product.id} value={product.id}>{product.title}</s-option>)}
-                </s-select>
+                <ProductPicker />
                 <s-text-field label="Auction title" name="title" placeholder="Spring collection • Lot 01" required />
                 <s-select label="Auction type" name="auctionType" details="Penny auctions raise the price by a fixed amount per bid.">
                   <s-option value="STANDARD">Standard auction</s-option>
@@ -42,8 +38,8 @@ export function CreateAuctionView({ data, onNavigate }: { data: DashboardData; o
 
             <s-section heading="Schedule">
               <div className={styles.fieldGrid}>
-                <DateTimeField id="create-starts" label="Starts at (UTC)" name="startsAt" />
-                <DateTimeField id="create-ends" label="Ends at (UTC)" name="endsAt" />
+                <DateTimeField id="create-starts" label="Starts at (UTC)" name="startsAt" startNowShortcut />
+                <DateTimeField id="create-ends" label="Ends at (UTC, optional)" name="endsAt" required={false} />
               </div>
             </s-section>
 
@@ -53,7 +49,7 @@ export function CreateAuctionView({ data, onNavigate }: { data: DashboardData; o
                 <s-money-field label={`Bid increment (${currencyCode})`} name="bidIncrement" min={0.01} required />
                 <s-money-field label={`Reserve price (${currencyCode})`} name="reservePrice" min={0} details="Optional. The lot only sells if bidding reaches this." />
                 <s-money-field label={`Buy now price (${currencyCode})`} name="buyNowPrice" min={0} details="Optional. Lets a buyer end the auction instantly." />
-                <s-number-field label="Buyer premium (%)" name="buyersPremiumPercent" min={0} max={100} step={0.01} details="Added on top of the winning amount." />
+                <BuyerPremiumField />
               </div>
             </s-section>
 
@@ -69,9 +65,9 @@ export function CreateAuctionView({ data, onNavigate }: { data: DashboardData; o
 
             <s-section heading="Bidding rules">
               <s-stack direction="block" gap="base">
-                <s-checkbox name="popcorn" label="Popcorn bidding" details="A bid in the final moments extends the closing time by two minutes." />
-                <s-checkbox name="proxyBidding" label="Proxy bidding" details="Bidders set a maximum and the app bids for them automatically." />
-                <s-checkbox name="requireApprovedBidders" label="Approved bidders only" details="Only customers on your approved bidder list can place bids." />
+                <s-checkbox name="popcorn" label="Popcorn bidding" details="A bid in the final moments extends the closing time by two minutes." checked />
+                <s-checkbox name="proxyBidding" label="Proxy bidding" details="Bidders set a maximum and the app bids for them automatically." checked />
+                <s-checkbox name="requireApprovedBidders" label="Approved bidders only" details="Only customers on your approved bidder list can place bids." checked />
               </s-stack>
             </s-section>
           </s-stack>

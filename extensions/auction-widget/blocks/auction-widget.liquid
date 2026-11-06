@@ -14,9 +14,16 @@
   data-counter-message="{{ 'auction.counter_received' | t | escape }}"
   data-buy-now-label="{{ 'auction.buy_now' | t | escape }}"
   data-proxy-bid-label="{{ 'auction.proxy_bid_amount' | t | escape }}"
+  data-no-end-message="{{ 'auction.no_end_date' | t | escape }}"
   {{ block.shopify_attributes }}
 >
-  <p class="auction-widget__status" aria-live="polite">{{ 'auction.loading' | t }}</p>
+  <div class="auction-widget__skeleton" aria-hidden="true">
+    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--title"></span>
+    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--short"></span>
+    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--medium"></span>
+    <span class="auction-widget__skeleton-line auction-widget__skeleton-line--button"></span>
+  </div>
+  <p class="auction-widget__status" aria-live="polite"></p>
   <a class="auction-widget__login" href="{{ routes.account_login_url }}?return_url={{ request.path | url_encode }}" hidden>{{ 'auction.login' | t }}</a>
   <div class="auction-widget__details" hidden>
     <h3 class="auction-widget__title"></h3>

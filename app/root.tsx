@@ -1,4 +1,5 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import { Toaster } from "sonner";
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
       </head>
       <body>
         <Outlet />
+        <Toaster position="top-right" richColors />
         <ScrollRestoration />
         <Scripts />
       </body>

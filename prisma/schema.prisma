@@ -43,7 +43,7 @@ model Auction {
   auctionType         String   @default("STANDARD")
   currencyCode        String   @default("USD")
   startsAt            DateTime
-  endsAt              DateTime
+  endsAt              DateTime?
   status              String   @default("DRAFT")
   startingPriceCents  Int
   reservePriceCents   Int?
@@ -67,6 +67,7 @@ model Auction {
   offers              Offer[]
 
   @@index([shop, status, startsAt])
+  @@unique([shop, productId])
   @@index([productId])
 }
 

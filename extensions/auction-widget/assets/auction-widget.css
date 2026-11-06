@@ -44,3 +44,51 @@
   gap: 0.35rem;
   margin-bottom: 0.5rem;
 }
+
+.auction-widget__skeleton {
+  display: grid;
+  gap: 0.8rem;
+  max-width: 24rem;
+}
+
+.auction-widget__skeleton[hidden] {
+  display: none;
+}
+
+.auction-widget__skeleton-line {
+  display: block;
+  height: 0.9rem;
+  border-radius: 0.3rem;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.08) 25%, rgba(0, 0, 0, 0.14) 37%, rgba(0, 0, 0, 0.08) 63%);
+  background-size: 400% 100%;
+  animation: auction-widget-skeleton 1.4s ease infinite;
+}
+
+.auction-widget__skeleton-line--title {
+  width: 58%;
+  height: 1.25rem;
+}
+
+.auction-widget__skeleton-line--short {
+  width: 36%;
+}
+
+.auction-widget__skeleton-line--medium {
+  width: 48%;
+}
+
+.auction-widget__skeleton-line--button {
+  width: 8rem;
+  height: 2.5rem;
+  margin-top: 0.25rem;
+}
+
+@keyframes auction-widget-skeleton {
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auction-widget__skeleton-line {
+    animation: none;
+  }
+}

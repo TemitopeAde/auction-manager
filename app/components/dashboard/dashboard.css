@@ -271,7 +271,6 @@
   line-height: 32px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
 }
 
 .am-statHint {
@@ -510,10 +509,105 @@
   outline-offset: 1px;
 }
 
+.am-datetimeControl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.am-datetimeControl .am-input {
+  min-width: 0;
+  flex: 1;
+}
+
 .am-fieldGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 12px 16px;
+}
+
+.am-productPicker {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.am-productSelected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+  background: var(--dash-surface-hover);
+}
+
+.am-productClear,
+.am-productMore {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.am-productClear:hover,
+.am-productMore:hover:not(:disabled) {
+  background: var(--dash-surface-hover);
+}
+
+.am-productClear:focus-visible,
+.am-productMore:focus-visible,
+.am-productOption:focus-visible {
+  outline: 2px solid var(--dash-accent);
+  outline-offset: 1px;
+}
+
+.am-productResults {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+}
+
+.am-productOption {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--dash-border);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.am-productResults li:last-child .am-productOption {
+  border-bottom: 0;
+}
+
+.am-productOption:hover,
+.am-productOptionSelected {
+  background: var(--dash-surface-hover);
+}
+
+.am-productMore:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.am-errorText {
+  color: var(--dash-critical);
 }
 
 .am-summaryRow {
@@ -532,6 +626,114 @@
   border-radius: var(--dash-radius);
   outline: 2px solid var(--dash-accent);
   outline-offset: -2px;
+}
+
+
+/* ---------- Analytics ---------- */
+
+.am-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: var(--dash-radius);
+  background: var(--dash-surface);
+  box-shadow: var(--dash-shadow);
+}
+
+.am-deltaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.am-chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.am-chartBox {
+  position: relative;
+  height: 240px;
+}
+
+.am-chartBoxSmall {
+  position: relative;
+  height: 180px;
+  margin-top: 8px;
+}
+
+.am-chartEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #fafafa;
+  color: var(--dash-text-subdued);
+}
+
+.am-chartTooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: var(--dash-text);
+}
+
+.am-segmented {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+}
+
+.am-segment {
+  flex-basis: 0;
+  min-width: 4px;
+  border-radius: 4px;
+}
+
+.am-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.am-legendItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.am-legendLabel {
+  flex: 1;
+}
+
+.am-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.am-srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* ---------- Responsive ---------- */

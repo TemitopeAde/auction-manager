@@ -7,6 +7,7 @@
     "loading": "Checking auction availability…",
     "current_bid": "Current bid",
     "closes_at": "Closes",
+    "no_end_date": "Until the store ends this auction",
     "unavailable": "Auction information is unavailable right now.",
     "bid_success": "Your bid was placed.",
     "bid_error": "Unable to place your bid.",

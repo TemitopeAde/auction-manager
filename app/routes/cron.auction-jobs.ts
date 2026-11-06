@@ -27,7 +27,7 @@ const runJobs = async (request: Request) => {
       }
     };
     const startingAuctions = await prisma.auction.findMany({
-      where: { shop, status: "SCHEDULED", startsAt: { lte: now }, endsAt: { gt: now }, closedAt: null },
+      where: { shop, status: "SCHEDULED", startsAt: { lte: now }, OR: [{ endsAt: null }, { endsAt: { gt: now } }], closedAt: null },
       select: { id: true, productId: true },
     });
     for (const auction of startingAuctions) {

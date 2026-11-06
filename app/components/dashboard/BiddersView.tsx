@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import styles from "./styles";
-import { ErrorBanner, ViewHeader, bidderTone, label, useDashboardFetcher, type Bidder, type DashboardData } from "./shared";
+import { ViewHeader, bidderTone, label, useDashboardFetcher, type Bidder, type DashboardData } from "./shared";
 
 const STATUSES = ["APPROVED", "PENDING", "BLOCKED"] as const;
 const ACTION_LABEL: Record<string, string> = { APPROVED: "Approve", BLOCKED: "Block", PENDING: "Mark pending" };
@@ -23,35 +23,12 @@ function BidderActions({ bidder }: { bidder: Bidder }) {
 
 export function BiddersView({ data }: { data: DashboardData }) {
   const { bidders } = data;
-  const formRef = useRef<HTMLFormElement>(null);
-  const { fetcher, busy, error } = useDashboardFetcher(() => formRef.current?.reset());
   const [filter, setFilter] = useState<"ALL" | (typeof STATUSES)[number]>("ALL");
   const visible = bidders.filter((b) => filter === "ALL" || b.status === filter);
 
   return (
     <>
       <ViewHeader title="Bidders" subtitle="Control who can bid on auctions that require approved bidders." />
-
-      <s-section heading="Add or update a bidder">
-        <fetcher.Form method="post" ref={formRef}>
-          <input type="hidden" name="intent" value="create-bidder" />
-          <s-stack direction="block" gap="base">
-            <ErrorBanner error={error} />
-            <div className={styles.fieldGrid}>
-              <s-text-field label="Shopify customer ID" name="customerId" placeholder="e.g. 7012345678901" required />
-              <s-email-field label="Bidder email" name="email" placeholder="name@example.com" required />
-              <s-select label="Access" name="status">
-                <s-option value="APPROVED">Approved</s-option>
-                <s-option value="PENDING">Pending</s-option>
-                <s-option value="BLOCKED">Blocked</s-option>
-              </s-select>
-            </div>
-            <s-stack direction="inline" justifyContent="end">
-              <s-button type="submit" variant="primary" icon="person-add" disabled={busy} {...(busy ? { loading: true } : {})}>Save bidder</s-button>
-            </s-stack>
-          </s-stack>
-        </fetcher.Form>
-      </s-section>
 
       <s-section heading={`Bidder list (${bidders.length})`}>
         {bidders.length > 0 && (
@@ -68,7 +45,7 @@ export function BiddersView({ data }: { data: DashboardData }) {
         {visible.length === 0 ? (
           <div className={styles.emptyInline}>
             <s-icon type="person-list" />
-            <span>{bidders.length === 0 ? "No bidders yet. Add a customer above to manage their access." : "No bidders with this status."}</span>
+            <span>{bidders.length === 0 ? "No bidders yet. Customers will appear here when they request to bid on an auction that requires approval." : "No bidders with this status."}</span>
           </div>
         ) : (
           <s-table variant="auto">

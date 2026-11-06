@@ -18,7 +18,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const customerId = url.searchParams.get("logged_in_customer_id");
   const customerLoggedIn = Boolean(customerId && /^[1-9]\d*$/.test(customerId));
   const auction = await prisma.auction.findFirst({
-    where: { shop, productId, startsAt: { lte: now }, endsAt: { gt: now }, status: { in: ["LIVE", "SCHEDULED"] } },
+    where: { shop, productId, startsAt: { lte: now }, OR: [{ endsAt: null }, { endsAt: { gt: now } }], status: { in: ["LIVE", "SCHEDULED"] } },
     orderBy: { createdAt: "desc" },
     include: { bids: { orderBy: [{ amountCents: "desc" }, { createdAt: "asc" }], take: 1 }, _count: { select: { bids: true } } },
   });
@@ -52,7 +52,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const auctionId = String(form.get("auctionId") ?? "");
   const auction = await prisma.auction.findFirst({ where: { id: auctionId, shop, productId } });
   const now = new Date();
-  if (!auction || auction.startsAt > now || auction.endsAt <= now || auction.closedAt || !["LIVE", "SCHEDULED"].includes(auction.status)) {
+  if (!auction || auction.startsAt > now || (auction.endsAt && auction.endsAt <= now) || auction.closedAt || !["LIVE", "SCHEDULED"].includes(auction.status)) {
     return json({ error: "This auction is not accepting actions." }, 400);
   }
 
@@ -124,10 +124,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         amountCents = runnerUp ? Math.min(leader.maxBidCents, Math.max(auction.startingPriceCents, runnerUp.maxBidCents + auction.bidIncrementCents)) : auction.startingPriceCents;
       }
       await tx.bid.create({ data: { auctionId, customerId: bidCustomerId, amountCents } });
-      const updatedEndsAt = auction.popcornSeconds > 0 && auction.endsAt.getTime() - now.getTime() <= auction.popcornSeconds * 1000
+      const updatedEndsAt = auction.endsAt && auction.popcornSeconds > 0 && auction.endsAt.getTime() - now.getTime() <= auction.popcornSeconds * 1000
         ? new Date(auction.endsAt.getTime() + auction.popcornSeconds * 1000)
         : auction.endsAt;
-      if (updatedEndsAt !== auction.endsAt) await tx.auction.update({ where: { id: auction.id }, data: { endsAt: updatedEndsAt } });
+      if (updatedEndsAt?.getTime() !== auction.endsAt?.getTime()) await tx.auction.update({ where: { id: auction.id }, data: { endsAt: updatedEndsAt } });
       return { currentBidCents: amountCents, endsAt: updatedEndsAt };
     });
     return json({ ok: true, ...result });

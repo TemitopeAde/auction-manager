@@ -19,7 +19,7 @@ function StatCard({ label, value, hint, icon, tone, onClick }: { label: string; 
 
 export function OverviewView({ data, onNavigate }: { data: DashboardData; onNavigate: (view: ViewId) => void }) {
   const { auctions, offers, checkoutProtection, currencyCode } = data;
-  const live = auctions.filter((a) => a.status === "LIVE").sort((a, b) => new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime());
+  const live = auctions.filter((a) => a.status === "LIVE").sort((a, b) => (a.endsAt?.getTime() ?? Infinity) - (b.endsAt?.getTime() ?? Infinity));
   const upcoming = auctions.filter((a) => a.status === "SCHEDULED").sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
   const needsClosing = auctions.filter((a) => a.status === "ENDED" && !a.closedAt);
   const pendingOffers = offers.filter((o) => o.status === "PENDING");
@@ -62,7 +62,7 @@ export function OverviewView({ data, onNavigate }: { data: DashboardData; onNavi
                   </div>
                   <div className={styles.listAside}>
                     <span className={styles.amount}>{money(auction.bids[0]?.amountCents ?? auction.startingPriceCents, auction.currencyCode)}</span>
-                    <span className={styles.subdued} suppressHydrationWarning>Ends in {timeUntil(auction.endsAt)}</span>
+                    <span className={styles.subdued} suppressHydrationWarning>{auction.endsAt ? `Ends in ${timeUntil(auction.endsAt)}` : "Ends when you end it"}</span>
                   </div>
                 </li>
               ))}

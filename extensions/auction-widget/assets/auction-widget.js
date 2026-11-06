@@ -2,10 +2,13 @@
   const render = async (root) => {
     const query = new URLSearchParams({ product_id: root.dataset.productId });
     const response = await fetch(`${root.dataset.endpoint}?${query}`, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(root.dataset.unavailableMessage);
     const payload = await response.json();
     const status = root.querySelector('.auction-widget__status');
+    const skeleton = root.querySelector('.auction-widget__skeleton');
     const loginLink = root.querySelector('.auction-widget__login');
     const details = root.querySelector('.auction-widget__details');
+    skeleton.hidden = true;
     if (!payload.auction) {
       status.textContent = '';
       details.hidden = true;
@@ -19,8 +22,13 @@
     root.querySelector('.auction-widget__title').textContent = auction.title;
     root.querySelector('.auction-widget__current').textContent = formatter.format((auction.currentBidCents ?? auction.startingPriceCents) / 100);
     const end = root.querySelector('.auction-widget__ends');
-    end.dateTime = auction.endsAt;
-    end.textContent = new Date(auction.endsAt).toLocaleString();
+    if (auction.endsAt) {
+      end.dateTime = auction.endsAt;
+      end.textContent = new Date(auction.endsAt).toLocaleString();
+    } else {
+      end.removeAttribute('datetime');
+      end.textContent = root.dataset.noEndMessage;
+    }
     root.querySelectorAll('[name="auctionId"]').forEach((input) => { input.value = auction.id; });
 
     const bidForm = root.querySelector('.auction-widget__form');
@@ -97,7 +105,10 @@
     bindSubmit(root.querySelector('.auction-widget__buy-now-form'), root, bidSuccess);
     bindSubmit(root.querySelector('.auction-widget__offer-form'), root, offerSuccess);
     bindSubmit(root.querySelector('.auction-widget__counter-form'), root, offerSuccess);
-    render(root).catch(() => { status.textContent = root.dataset.unavailableMessage; });
+    render(root).catch(() => {
+      root.querySelector('.auction-widget__skeleton').hidden = true;
+      status.textContent = root.dataset.unavailableMessage;
+    });
     window.setInterval(() => render(root).catch(() => {}), 10000);
   });
 

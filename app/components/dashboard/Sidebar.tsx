@@ -20,6 +20,7 @@ export function Sidebar({
 }) {
   const items: NavItem[] = [
     { id: "overview", label: "Overview", icon: "home", count: counts.attention || undefined, alert: counts.attention > 0 },
+    { id: "analytics", label: "Analytics", icon: "chart-vertical" },
     { id: "auctions", label: "Auctions", icon: "live", count: counts.auctions },
     { id: "offers", label: "Offers", icon: "cash-dollar", count: counts.pendingOffers || undefined, alert: counts.pendingOffers > 0 },
     { id: "bidders", label: "Bidders", icon: "person-list", count: counts.bidders },

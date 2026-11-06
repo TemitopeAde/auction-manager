@@ -1,7 +1,7 @@
 import { useState } from "react";
 import styles from "./styles";
 import {
-  DateTimeField, ErrorBanner, ViewHeader, auctionTone, date, datetimeLocal, label, money, timeUntil, useDashboardFetcher,
+  BuyerPremiumField, DateTimeField, ErrorBanner, ViewHeader, auctionTone, date, datetimeLocal, label, money, timeUntil, useDashboardFetcher,
   type Auction, type DashboardData, type ViewId,
 } from "./shared";
 
@@ -26,20 +26,41 @@ function AuctionEditor({ auction, currencyCode, onClose }: { auction: Auction; c
   return (
     <div className={styles.editor}>
       <s-section heading={`Edit “${auction.title}”`}>
-        <fetcher.Form method="post">
+        <fetcher.Form method="post" noValidate>
           <HiddenFields intent="update-scheduled" id={auction.id} />
           <s-stack direction="block" gap="base">
             <ErrorBanner error={error} />
             {locked && <s-banner tone="info">Auctions that already have bids can’t be edited.</s-banner>}
             <div className={styles.fieldGrid}>
               <s-text-field label="Auction title" name="title" value={auction.title} required />
-              <DateTimeField id={`starts-${auction.id}`} label="Starts at (UTC)" name="startsAt" defaultValue={datetimeLocal(auction.startsAt)} />
-              <DateTimeField id={`ends-${auction.id}`} label="Ends at (UTC)" name="endsAt" defaultValue={datetimeLocal(auction.endsAt)} />
+              <s-select label="Auction type" name="auctionType" value={auction.auctionType}>
+                <s-option value="STANDARD">Standard auction</s-option>
+                <s-option value="PENNY">Penny auction</s-option>
+              </s-select>
+              <DateTimeField id={`starts-${auction.id}`} label="Starts at (UTC)" name="startsAt" defaultValue={datetimeLocal(auction.startsAt)} startNowShortcut />
+              <DateTimeField id={`ends-${auction.id}`} label="Ends at (UTC, optional)" name="endsAt" defaultValue={datetimeLocal(auction.endsAt)} required={false} />
               <s-money-field label={`Starting bid (${currencyCode})`} name="startingPrice" min={0} value={(auction.startingPriceCents / 100).toFixed(2)} required />
               <s-money-field label={`Bid increment (${currencyCode})`} name="bidIncrement" min={0.01} value={(auction.bidIncrementCents / 100).toFixed(2)} required />
               <s-money-field label={`Reserve (${currencyCode})`} details="Optional" name="reservePrice" min={0} value={auction.reservePriceCents === null ? undefined : (auction.reservePriceCents / 100).toFixed(2)} />
               <s-money-field label={`Buy now (${currencyCode})`} details="Optional" name="buyNowPrice" min={0} value={auction.buyNowPriceCents === null ? undefined : (auction.buyNowPriceCents / 100).toFixed(2)} />
+              <BuyerPremiumField defaultValue={(auction.buyersPremiumBps / 100).toFixed(2)} />
             </div>
+            <s-section heading="Offers">
+              <s-stack direction="block" gap="base">
+                <s-checkbox name="offersEnabled" label="Allow Make an Offer" checked={auction.offersEnabled} details="Shoppers can send a private offer during the auction." />
+                <div className={styles.fieldGrid}>
+                  <s-money-field label={`Auto-accept offers at (${currencyCode})`} name="offerAutoAccept" min={0} details="Optional" value={auction.offerAutoAcceptCents === null ? undefined : (auction.offerAutoAcceptCents / 100).toFixed(2)} />
+                  <s-money-field label={`Auto-decline offers below (${currencyCode})`} name="offerAutoDecline" min={0} details="Optional" value={auction.offerAutoDeclineCents === null ? undefined : (auction.offerAutoDeclineCents / 100).toFixed(2)} />
+                </div>
+              </s-stack>
+            </s-section>
+            <s-section heading="Bidding rules">
+              <s-stack direction="block" gap="base">
+                <s-checkbox name="popcorn" label="Popcorn bidding" details="A bid in the final moments extends the closing time by two minutes." checked={auction.popcornSeconds > 0} />
+                <s-checkbox name="proxyBidding" label="Proxy bidding" details="Bidders set a maximum and the app bids for them automatically." checked={auction.proxyBiddingEnabled} />
+                <s-checkbox name="requireApprovedBidders" label="Approved bidders only" details="Only customers on your approved bidder list can place bids." checked={auction.requireApprovedBidders} />
+              </s-stack>
+            </s-section>
             <s-stack direction="inline" gap="small" justifyContent="end">
               <s-button type="button" variant="secondary" onClick={onClose}>Cancel</s-button>
               <s-button type="submit" variant="primary" disabled={busy || locked} {...(busy ? { loading: true } : {})}>Save changes</s-button>
@@ -59,10 +80,10 @@ function AuctionActions({ auction, onEdit }: { auction: Auction; onEdit: () => v
         {auction.status === "DRAFT" && (
           <fetcher.Form method="post"><HiddenFields intent="delete" id={auction.id} /><s-button type="submit" variant="tertiary" tone="critical" icon="delete" disabled={busy}>Delete</s-button></fetcher.Form>
         )}
-        {auction.status === "SCHEDULED" && (
+        {(auction.status === "SCHEDULED" || auction.status === "LIVE") && (
           <>
             <s-button type="button" variant="secondary" icon="edit" onClick={onEdit}>Edit</s-button>
-            <fetcher.Form method="post"><HiddenFields intent="cancel-scheduled" id={auction.id} /><s-button type="submit" variant="tertiary" tone="critical" disabled={busy}>Cancel</s-button></fetcher.Form>
+            {auction.status === "SCHEDULED" && <fetcher.Form method="post"><HiddenFields intent="cancel-scheduled" id={auction.id} /><s-button type="submit" variant="tertiary" tone="critical" disabled={busy}>Cancel</s-button></fetcher.Form>}
           </>
         )}
         {auction.status === "LIVE" && (
@@ -82,7 +103,7 @@ export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavi
   const [filter, setFilter] = useState<Filter>("ALL");
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const editing = auctions.find((a) => a.id === editingId && a.status === "SCHEDULED");
+  const editing = auctions.find((a) => a.id === editingId && ["SCHEDULED", "LIVE"].includes(a.status));
 
   const activeFilter = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
   const q = query.trim().toLowerCase();
@@ -148,8 +169,8 @@ export function AuctionsView({ data, onNavigate }: { data: DashboardData; onNavi
                     </s-table-cell>
                     <s-table-cell>
                       <div className={styles.cellStack}>
-                        <span>{date(auction.startsAt)} → {date(auction.endsAt)}</span>
-                        {auction.status === "LIVE" && <span className={styles.subdued} suppressHydrationWarning>Ends in {timeUntil(auction.endsAt)}</span>}
+                        <span>{date(auction.startsAt)} → {auction.endsAt ? date(auction.endsAt) : "No scheduled end"}</span>
+                        {auction.status === "LIVE" && <span className={styles.subdued} suppressHydrationWarning>{auction.endsAt ? `Ends in ${timeUntil(auction.endsAt)}` : "Ends when you end it"}</span>}
                         {auction.status === "SCHEDULED" && <span className={styles.subdued} suppressHydrationWarning>Starts in {timeUntil(auction.startsAt)}</span>}
                       </div>
                     </s-table-cell>

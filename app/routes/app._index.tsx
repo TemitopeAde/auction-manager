@@ -13,10 +13,11 @@ import { CreateAuctionView } from "../components/dashboard/CreateAuctionView";
 import { OffersView } from "../components/dashboard/OffersView";
 import { BiddersView } from "../components/dashboard/BiddersView";
 import { VIEW_IDS, setFormatLocale, type ViewId } from "../components/dashboard/shared";
+import { AnalyticsView } from "../components/dashboard/AnalyticsView";
+import { getAuctionAnalytics, parseRange, type AnalyticsRange } from "../analytics.server";
+import { createAuctionSchema, getAuctionFormValues, updateAuctionSchema } from "../validation/auction.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboardCss }];
-
-type Product = { id: string; title: string; status: string; variants: { nodes: { price: string }[] } };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -24,9 +25,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     admin.graphql(`#graphql
       query AuctionProducts {
         shop { currencyCode }
-      products(first: 250, sortKey: TITLE) {
-          nodes { id title status variants(first: 1) { nodes { id price } } }
-        }
       }`),
     prisma.auction.findMany({ where: { shop: session.shop }, orderBy: { createdAt: "desc" }, include: {
       _count: { select: { bids: true, offers: true } },
@@ -40,9 +38,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const now = new Date();
   const auctions = auctionsResult.map((auction) => ({
     ...auction,
-    status: auction.status === "CANCELED" ? "CANCELED" : auction.status === "CLOSING" ? "CLOSING" : auction.status === "DRAFT" ? "DRAFT" : auction.closedAt || auction.status === "ENDED" || auction.endsAt <= now ? "ENDED" : auction.startsAt > now ? "SCHEDULED" : "LIVE",
+    status: auction.status === "CANCELED" ? "CANCELED" : auction.status === "CLOSING" ? "CLOSING" : auction.status === "DRAFT" ? "DRAFT" : auction.closedAt || auction.status === "ENDED" || (auction.endsAt && auction.endsAt <= now) ? "ENDED" : auction.startsAt > now ? "SCHEDULED" : "LIVE",
   }));
-  return { shop: session.shop, locale: new URL(request.url).searchParams.get("locale"), products: (json.data?.products?.nodes ?? []) as Product[], auctions, offers, bidders, currencyCode: json.data?.shop?.currencyCode ?? "USD", checkoutProtection };
+  const url = new URL(request.url);
+  const currencyCode: string = json.data?.shop?.currencyCode ?? "USD";
+  const analytics = await getAuctionAnalytics(session.shop, parseRange(url.searchParams.get("range")), currencyCode);
+  return { shop: session.shop, locale: url.searchParams.get("locale"), auctions, offers, bidders, currencyCode, checkoutProtection, analytics };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -50,21 +51,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "create");
 
-  if (intent === "create-bidder") {
-    const customerInput = String(form.get("customerId") ?? "").trim();
-    const customerId = customerInput.replace(/^gid:\/\/shopify\/Customer\//, "");
-    const email = String(form.get("email") ?? "").trim().toLowerCase();
-    const status = String(form.get("status") ?? "APPROVED");
-    if (!/^\d+$/.test(customerId)) return { error: "Enter a Shopify customer ID." };
-    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return { error: "Enter the bidder email address." };
-    if (!["APPROVED", "BLOCKED", "PENDING"].includes(status)) return { error: "Choose a valid bidder status." };
-    await prisma.bidder.upsert({
-      where: { shop_customerId: { shop: session.shop, customerId } },
-      create: { shop: session.shop, customerId, email, status },
-      update: { email, status },
-    });
-    return { ok: true, message: "Bidder access saved." };
-  }
   if (intent === "bidder-status") {
     const id = String(form.get("id") ?? "");
     const status = String(form.get("status") ?? "");
@@ -113,34 +99,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
   if (intent === "update-scheduled") {
     const id = String(form.get("id") ?? "");
-    const auction = await prisma.auction.findFirst({ where: { id, shop: session.shop, status: "SCHEDULED", startsAt: { gt: new Date() } }, include: { _count: { select: { bids: true } } } });
-    if (!auction || auction._count.bids > 0) return { error: "Only upcoming auctions without bids can be edited." };
-    const title = String(form.get("title") ?? "").trim();
-    const toUtcDate = (value: FormDataEntryValue | null) => {
-      const parts = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-      return parts ? new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4]), Number(parts[5]))) : new Date(NaN);
-    };
-    const startsAt = toUtcDate(form.get("startsAt"));
-    const endsAt = toUtcDate(form.get("endsAt"));
-    const startingPrice = Number(form.get("startingPrice"));
-    const reservePrice = form.get("reservePrice") ? Number(form.get("reservePrice")) : null;
-    const buyNowPrice = form.get("buyNowPrice") ? Number(form.get("buyNowPrice")) : null;
-    const bidIncrement = Number(form.get("bidIncrement"));
-    const numericValues = [startingPrice, bidIncrement, ...(reservePrice === null ? [] : [reservePrice]), ...(buyNowPrice === null ? [] : [buyNowPrice])];
-    if (!title || Number.isNaN(startsAt.valueOf()) || Number.isNaN(endsAt.valueOf()) || startsAt <= new Date() || endsAt <= startsAt || numericValues.some((value) => !Number.isFinite(value) || value < 0) || bidIncrement <= 0 || (reservePrice !== null && reservePrice < startingPrice) || (buyNowPrice !== null && buyNowPrice <= startingPrice) || (reservePrice !== null && buyNowPrice !== null && reservePrice > buyNowPrice)) {
-      return { error: "Check the title, future schedule, and auction prices." };
-    }
-    const overlap = await prisma.auction.findFirst({ where: { shop: session.shop, productId: auction.productId, id: { not: id }, status: { in: ["LIVE", "SCHEDULED"] }, closedAt: null, startsAt: { lt: endsAt }, endsAt: { gt: startsAt } }, select: { id: true } });
-    if (overlap) return { error: "This product already has an auction scheduled during that time." };
+    const now = new Date();
+    const auction = await prisma.auction.findFirst({ where: {
+      id, shop: session.shop, status: { in: ["SCHEDULED", "LIVE"] }, closedAt: null,
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+    }, include: { _count: { select: { bids: true } } } });
+    if (!auction) return { error: "Only upcoming or live auctions can be edited." };
+    if (auction._count.bids > 0) return { error: "An auction can’t be edited after bidding begins." };
+    const parsed = updateAuctionSchema.safeParse(getAuctionFormValues(form));
+    if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the auction details and try again." };
+    const {
+      title, startsAt, endsAt, startingPrice, reservePrice, buyNowPrice, bidIncrement,
+      auctionType, buyersPremiumPercent, offerAutoAccept, offerAutoDecline,
+      offersEnabled, popcorn, proxyBidding, requireApprovedBidders,
+    } = parsed.data;
     await prisma.auction.update({ where: { id }, data: {
-      title, startsAt, endsAt,
+      title, startsAt, endsAt, auctionType,
       startingPriceCents: Math.round(startingPrice * 100),
       bidIncrementCents: Math.round(bidIncrement * 100),
       reservePriceCents: reservePrice === null ? null : Math.round(reservePrice * 100),
       buyNowPriceCents: buyNowPrice === null ? null : Math.round(buyNowPrice * 100),
+      buyersPremiumBps: Math.round(buyersPremiumPercent * 100),
+      offersEnabled,
+      offerAutoAcceptCents: offerAutoAccept === null ? null : Math.round(offerAutoAccept * 100),
+      offerAutoDeclineCents: offerAutoDecline === null ? null : Math.round(offerAutoDecline * 100),
+      popcornSeconds: popcorn ? 120 : 0,
+      proxyBiddingEnabled: proxyBidding,
+      requireApprovedBidders,
+      status: startsAt > now ? "SCHEDULED" : "LIVE",
     } });
     await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
-    return { ok: true, message: "Scheduled auction updated." };
+    return { ok: true, message: "Auction updated." };
   }
   if (intent === "close" || intent === "end-auction") {
     const id = String(form.get("id") ?? "");
@@ -149,7 +138,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       bids: { orderBy: [{ amountCents: "desc" }, { createdAt: "asc" }], take: 1 },
       offers: { where: { status: { in: ["BUY_NOW", "ACCEPTED"] }, draftOrderId: null }, orderBy: { createdAt: "asc" } },
     } });
-    if (!auction || (intent === "close" && auction.endsAt > now) || (intent === "end-auction" && (auction.startsAt > now || auction.endsAt <= now || auction.closedAt))) return { error: "This auction can’t be closed in its current state." };
+    if (!auction || (intent === "close" && (!auction.endsAt || auction.endsAt > now)) || (intent === "end-auction" && (auction.startsAt > now || (auction.endsAt && auction.endsAt <= now) || auction.closedAt))) return { error: "This auction can’t be closed in its current state." };
     if (auction.closedAt || auction.draftOrderId) return { error: "This auction has already been closed." };
     const claimed = await prisma.auction.updateMany({
       where: { id: auction.id, shop: session.shop, closedAt: null, draftOrderId: null, status: { in: ["LIVE", "SCHEDULED", "ENDED"] } },
@@ -188,63 +177,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await syncAuctionCheckoutLock(admin, session.shop, auction.productId);
       return { ok: true, message: "Winner declared and Shopify invoice emailed." };
     } catch (error) {
-      await prisma.auction.updateMany({ where: { id: auction.id, status: "CLOSING", closedAt: null }, data: { status: intent === "end-auction" ? "LIVE" : auction.endsAt <= now ? "ENDED" : auction.startsAt > now ? "SCHEDULED" : "LIVE" } });
+      await prisma.auction.updateMany({ where: { id: auction.id, status: "CLOSING", closedAt: null }, data: { status: intent === "end-auction" ? "LIVE" : auction.endsAt && auction.endsAt <= now ? "ENDED" : auction.startsAt > now ? "SCHEDULED" : "LIVE" } });
       return { error: error instanceof Error ? error.message : "Could not close this auction." };
     }
   }
-  const productId = String(form.get("productId") ?? "");
-  const title = String(form.get("title") ?? "").trim();
-  const toUtcDate = (value: FormDataEntryValue | null) => {
-    const parts = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-    return parts ? new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4]), Number(parts[5]))) : new Date(NaN);
-  };
-  const startsAt = toUtcDate(form.get("startsAt"));
-  const endsAt = toUtcDate(form.get("endsAt"));
-  const startingPrice = Number(form.get("startingPrice"));
-  const reservePrice = form.get("reservePrice") ? Number(form.get("reservePrice")) : null;
-  const buyNowPrice = form.get("buyNowPrice") ? Number(form.get("buyNowPrice")) : null;
-  const bidIncrement = Number(form.get("bidIncrement"));
-  const numericValues = [startingPrice, bidIncrement, ...(reservePrice === null ? [] : [reservePrice]), ...(buyNowPrice === null ? [] : [buyNowPrice])];
-  const buyersPremiumPercent = Number(form.get("buyersPremiumPercent") || 0);
-  const offerAutoAccept = form.get("offerAutoAccept") ? Number(form.get("offerAutoAccept")) : null;
-  const offerAutoDecline = form.get("offerAutoDecline") ? Number(form.get("offerAutoDecline")) : null;
-  if (!productId || !title || Number.isNaN(startsAt.valueOf()) || Number.isNaN(endsAt.valueOf()) || endsAt <= startsAt || numericValues.some((value) => !Number.isFinite(value) || value < 0) || bidIncrement <= 0 || !Number.isFinite(buyersPremiumPercent) || buyersPremiumPercent < 0 || buyersPremiumPercent > 100 || (offerAutoAccept !== null && (!Number.isFinite(offerAutoAccept) || offerAutoAccept < 0)) || (offerAutoDecline !== null && (!Number.isFinite(offerAutoDecline) || offerAutoDecline < 0)) || (reservePrice !== null && reservePrice < startingPrice) || (buyNowPrice !== null && buyNowPrice <= startingPrice) || (reservePrice !== null && buyNowPrice !== null && reservePrice > buyNowPrice)) {
-    return { error: "Check the product, dates, starting price, bid increment, reserve, and buy now price." };
-  }
-  const overlappingAuction = await prisma.auction.findFirst({
-    where: {
-      shop: session.shop,
-      productId,
-      closedAt: null,
-      status: { in: ["LIVE", "SCHEDULED"] },
-      startsAt: { lt: endsAt },
-      endsAt: { gt: startsAt },
-    },
-    select: { id: true },
-  });
-  if (overlappingAuction) return { error: "This product already has an auction scheduled during that time." };
+  const parsed = createAuctionSchema.safeParse(getAuctionFormValues(form));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the auction details and try again." };
+  const { productId, title, startsAt, endsAt, startingPrice, reservePrice, buyNowPrice, bidIncrement, auctionType, buyersPremiumPercent, offerAutoAccept, offerAutoDecline, offersEnabled, popcorn, proxyBidding, requireApprovedBidders } = parsed.data;
+  const existingAuction = await prisma.auction.findFirst({ where: { shop: session.shop, productId }, select: { id: true } });
+  if (existingAuction) return { error: "This product already has an auction. Each product can only have one auction." };
   const productResponse = await admin.graphql(`#graphql
     query AuctionProduct($id: ID!) { shop { currencyCode } product(id: $id) { id title status variants(first: 1) { nodes { id } } } }`, { variables: { id: productId } });
   const productJson = await productResponse.json();
   const selectedProduct = productJson.data?.product;
   if (!selectedProduct || selectedProduct.status !== "ACTIVE" || !selectedProduct.variants?.nodes?.[0]?.id) return { error: "Choose an active product from your store." };
-  const createdAuction = await prisma.auction.create({ data: {
-    shop: session.shop, productId, variantId: selectedProduct.variants.nodes[0].id, productTitle: selectedProduct.title, title,
-    currencyCode: productJson.data?.shop?.currencyCode ?? "USD",
-    auctionType: form.get("auctionType") === "PENNY" ? "PENNY" : "STANDARD",
-    startsAt, endsAt, startingPriceCents: Math.round(startingPrice * 100),
-    reservePriceCents: reservePrice === null ? null : Math.round(reservePrice * 100),
-    buyNowPriceCents: buyNowPrice === null ? null : Math.round(buyNowPrice * 100),
-    bidIncrementCents: Math.round(bidIncrement * 100),
-    status: startsAt > new Date() ? "SCHEDULED" : "LIVE",
-    popcornSeconds: form.get("popcorn") === "on" ? 120 : 0,
-    proxyBiddingEnabled: form.get("proxyBidding") === "on",
-    buyersPremiumBps: Math.round(buyersPremiumPercent * 100),
-    offersEnabled: form.get("offersEnabled") === "on",
-    offerAutoAcceptCents: offerAutoAccept === null ? null : Math.round(offerAutoAccept * 100),
-    offerAutoDeclineCents: offerAutoDecline === null ? null : Math.round(offerAutoDecline * 100),
-    requireApprovedBidders: form.get("requireApprovedBidders") === "on",
-  } });
+  let createdAuction;
+  try {
+    createdAuction = await prisma.auction.create({ data: {
+      shop: session.shop, productId, variantId: selectedProduct.variants.nodes[0].id, productTitle: selectedProduct.title, title,
+      currencyCode: productJson.data?.shop?.currencyCode ?? "USD",
+      auctionType,
+      startsAt, endsAt, startingPriceCents: Math.round(startingPrice * 100),
+      reservePriceCents: reservePrice === null ? null : Math.round(reservePrice * 100),
+      buyNowPriceCents: buyNowPrice === null ? null : Math.round(buyNowPrice * 100),
+      bidIncrementCents: Math.round(bidIncrement * 100),
+      status: startsAt > new Date() ? "SCHEDULED" : "LIVE",
+      popcornSeconds: popcorn ? 120 : 0,
+      proxyBiddingEnabled: proxyBidding,
+      buyersPremiumBps: Math.round(buyersPremiumPercent * 100),
+      offersEnabled,
+      offerAutoAcceptCents: offerAutoAccept === null ? null : Math.round(offerAutoAccept * 100),
+      offerAutoDeclineCents: offerAutoDecline === null ? null : Math.round(offerAutoDecline * 100),
+      requireApprovedBidders,
+    } });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      return { error: "This product already has an auction. Each product can only have one auction." };
+    }
+    throw error;
+  }
   try {
     await syncAuctionCheckoutLock(admin, session.shop, createdAuction.productId);
   } catch (error) {
@@ -254,7 +225,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true, message: "Auction created." };
 };
 
-const VIEW_TITLES: Record<ViewId, string> = { overview: "Overview", auctions: "Auctions", create: "New auction", offers: "Offers", bidders: "Bidders" };
+const VIEW_TITLES: Record<ViewId, string> = { overview: "Overview", analytics: "Analytics", auctions: "Auctions", create: "New auction", offers: "Offers", bidders: "Bidders" };
 
 // Switching dashboard views only changes `?view=`; don't refetch products and auctions for that.
 export const shouldRevalidate: ShouldRevalidateFunction = ({ currentUrl, nextUrl, formMethod, defaultShouldRevalidate }) => {
@@ -272,6 +243,14 @@ export default function AuctionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get("view") as ViewId | null;
   const view: ViewId = requested && VIEW_IDS.includes(requested) ? requested : "overview";
+
+  const changeRange = (range: AnalyticsRange) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set("range", String(range));
+      return params;
+    }, { replace: true, preventScrollReset: true });
+  };
 
   const navigate = (next: ViewId) => {
     setSearchParams((prev) => {
@@ -298,6 +277,7 @@ export default function AuctionsPage() {
           {view === "overview" && <OverviewView data={data} onNavigate={navigate} />}
           {view === "auctions" && <AuctionsView data={data} onNavigate={navigate} />}
           {view === "create" && <CreateAuctionView data={data} onNavigate={navigate} />}
+          {view === "analytics" && <AnalyticsView data={data} onRangeChange={changeRange} />}
           {view === "offers" && <OffersView data={data} />}
           {view === "bidders" && <BiddersView data={data} />}
         </main>
